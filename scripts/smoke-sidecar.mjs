@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import net from 'node:net'
 
 const binaryName = process.platform === 'win32' ? 'astudio-server.exe' : 'astudio-server'
@@ -40,6 +40,37 @@ async function waitForHealth(url, timeoutMs = 45000) {
   throw new Error(`Timed out waiting for ${url}`)
 }
 
+function waitForExit(child, timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve()
+      return
+    }
+    const timer = setTimeout(resolve, timeoutMs)
+    child.once('exit', () => {
+      clearTimeout(timer)
+      resolve()
+    })
+  })
+}
+
+async function stopChild(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return
+
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' })
+    await waitForExit(child)
+    return
+  }
+
+  child.kill('SIGTERM')
+  await waitForExit(child)
+  if (child.exitCode === null && child.signalCode === null) {
+    child.kill('SIGKILL')
+    await waitForExit(child)
+  }
+}
+
 async function main() {
   if (!existsSync(sidecarPath)) {
     throw new Error(`Sidecar binary does not exist: ${sidecarPath}`)
@@ -48,7 +79,23 @@ async function main() {
   const port = await findFreePort()
   const dataDir = mkdtempSync(join(tmpdir(), 'astudio-sidecar-'))
   const webDistDir = join(process.cwd(), 'web', 'dist')
-  const child = spawn(sidecarPath, [], {
+  let output = ''
+  let child = null
+  const hardTimeout = setTimeout(() => {
+    console.error(output)
+    console.error('Sidecar smoke test exceeded the hard timeout.')
+    if (child && child.pid) {
+      if (process.platform === 'win32') {
+        spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' })
+      } else {
+        child.kill('SIGKILL')
+      }
+    }
+    process.exit(1)
+  }, 180000)
+
+  console.log(`Starting sidecar smoke test on http://127.0.0.1:${port}/api/health`)
+  child = spawn(sidecarPath, [], {
     env: {
       ...process.env,
       ASTUDIO_DATA_DIR: dataDir,
@@ -60,7 +107,6 @@ async function main() {
     windowsHide: true,
   })
 
-  let output = ''
   child.stdout.on('data', (chunk) => {
     output += chunk.toString()
   })
@@ -69,15 +115,14 @@ async function main() {
   })
 
   try {
-    const health = await waitForHealth(`http://127.0.0.1:${port}/api/health`)
+    const health = await waitForHealth(`http://127.0.0.1:${port}/api/health`, 120000)
     console.log(`Sidecar health check passed: ${JSON.stringify(health)}`)
   } catch (error) {
     console.error(output)
     throw error
   } finally {
-    if (!child.killed) {
-      child.kill(process.platform === 'win32' ? undefined : 'SIGTERM')
-    }
+    clearTimeout(hardTimeout)
+    await stopChild(child)
   }
 }
 
