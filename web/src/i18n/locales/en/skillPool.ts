@@ -1,0 +1,58 @@
+import type { TranslationTree } from '../../types'
+
+const en: TranslationTree = {
+  skillPool: {
+    opFailed: 'Operation failed',
+    builtin: 'Built-in',
+    bundleKind: 'Bundle',
+    aiGenerated: 'AI generated',
+    categoryImport: 'Import',
+    categoryCustom: 'Custom',
+    categoryGeneral: 'General',
+    generatedOk: 'Generated',
+    title: 'Skill pool',
+    introP1:
+      'Shared skills assignable to agents. After use_skill(slug), agents follow SKILL.md.',
+    introP2:
+      'Sources: ① Import from a ClawHub / SkillHub URL; ② AI-generate SKILL.md via skill_creator.',
+    refresh: 'Refresh',
+    importTitle: 'Import Skill from URL',
+    exploreHint: 'Browse skills here',
+    urlPlaceholder: 'Paste ClawHub / SkillHub skill page URL',
+    probing: 'Detecting source…',
+    willBeSlug: 'Will use slug:',
+    slugPlaceholder: 'Local slug (empty → auto user__slug)',
+    categoryPlaceholder: 'Category (default: Import)',
+    importBtn: 'Import',
+    aiTitle: 'Generate a Skill',
+    toggleHide: 'Hide',
+    toggleShow: 'Show',
+    aiDesc: 'Describe inputs, steps, outputs — skill_creator writes SKILL.md.',
+    aiSlugPh: 'slug (letters, numbers, _)',
+    aiNamePh: 'Display name',
+    aiCategoryPh: 'Category (default: Custom)',
+    aiGoalPh:
+      'Example: From uploaded CSV, report coverage and outliers in Markdown with top 10 rows.',
+    generateBtn: 'Generate Skill',
+    loadingPool: 'Loading Skill pool…',
+    toggleOn: 'On',
+    toggleOff: 'Off',
+    noDesc: '(no description)',
+    pythonImpl: 'Python implementation — function-call ready',
+    filesSummary: '{{n}} files',
+    filesMore: '… {{n}} more',
+    viewSource: 'View source ↗',
+    viewSkillMd: 'View SKILL.md',
+    refreshFromSource: 'Pull latest from source',
+    deleteTitle: 'Delete',
+    assignable: 'Assignable',
+    footerHint: 'Use find_skill in any task to discover ClawHub candidates to import.',
+    drawerAria: 'SKILL.md preview',
+    close: 'Close',
+    loadingMd: 'Loading SKILL.md…',
+    deleteConfirm:
+      'Delete {{slug}}? Assignments to agents are not removed automatically.',
+  },
+}
+
+export default en

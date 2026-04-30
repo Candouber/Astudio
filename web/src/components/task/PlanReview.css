@@ -1,0 +1,110 @@
+.plan-review {
+  max-width: 800px;
+  margin: 0 auto;
+  height: 100%;
+  padding: 32px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+.plan-review--loading {
+  max-width: none;
+  padding: 80px 0;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  gap: 12px;
+}
+
+.plan-review__header {
+  padding: 20px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.plan-review__title-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.plan-review__icon {
+  color: var(--accent-brand);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.plan-review__header h2 {
+  font-size: 1.1rem;
+  margin-bottom: 4px;
+}
+
+.plan-review__question {
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.plan-review__meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.plan-review__step-count {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.plan-review__steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Action bar - sticky at bottom */
+.plan-review__actions {
+  position: sticky;
+  bottom: 0;
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  border: 1px solid var(--border-color);
+  border-bottom: none;
+  z-index: 100;
+  justify-content: center;
+  margin-top: 8px;
+  flex-shrink: 0;
+  box-shadow: 0 -8px 18px rgba(15, 23, 42, 0.06);
+}
+
+.plan-review__approve {
+  min-width: 160px;
+}
+
+.plan-review__reject-form {
+  width: 100%;
+  max-width: 600px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.plan-review__reject-form textarea {
+  resize: vertical;
+  font-size: 0.88rem;
+}
+
+.plan-review__reject-actions {
+  display: flex;
+  gap: 8px;
+}

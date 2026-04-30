@@ -1,0 +1,48 @@
+.common-skill-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.common-skill-picker--compact {
+  gap: 6px;
+}
+
+.common-skill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 600;
+  transition: all var(--transition-fast);
+}
+
+.common-skill-picker--compact .common-skill {
+  padding: 4px 9px;
+  font-size: 0.75rem;
+}
+
+.common-skill:hover {
+  border-color: var(--accent-brand);
+  color: var(--accent-brand);
+}
+
+.common-skill--on {
+  background: var(--accent-brand-light);
+  border-color: var(--accent-brand);
+  color: var(--accent-brand);
+}
+
+.common-skill-picker__empty {
+  padding: 10px 12px;
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}

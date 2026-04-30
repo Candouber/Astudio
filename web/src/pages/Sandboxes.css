@@ -1,0 +1,134 @@
+.sandboxes-page {
+  padding: 28px;
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.sandboxes-page__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+  margin-bottom: 24px;
+}
+
+.sandboxes-page__header h1 {
+  font-size: 1.5rem;
+  margin-bottom: 6px;
+}
+
+.sandboxes-page__header p,
+.sandboxes-page__empty p {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.sandboxes-page__empty {
+  min-height: 260px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-muted);
+}
+
+.sandboxes-page__empty h3 {
+  color: var(--text-primary);
+  font-size: 1rem;
+}
+
+.sandboxes-page__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sandbox-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+}
+
+.sandbox-row__main {
+  border: 0;
+  background: transparent;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.sandbox-row__main strong,
+.sandbox-row__main small {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sandbox-row__main strong {
+  font-size: 0.92rem;
+  color: var(--text-primary);
+  margin-bottom: 3px;
+}
+
+.sandbox-row__main small {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.sandbox-row__status {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #9ca3af;
+  flex-shrink: 0;
+}
+
+.sandbox-row__status--ready { background: #16a34a; }
+.sandbox-row__status--running { background: #2563eb; }
+.sandbox-row__status--stopped { background: #6b7280; }
+.sandbox-row__status--error { background: #dc2626; }
+
+.sandbox-badge {
+  font-size: 0.75rem;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.sandbox-badge--ready {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.sandbox-badge--running {
+  color: #1d4ed8;
+  background: #dbeafe;
+}
+
+.sandbox-badge--error {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+@media (max-width: 760px) {
+  .sandboxes-page {
+    padding: 18px;
+  }
+
+  .sandbox-row {
+    grid-template-columns: 1fr;
+  }
+}

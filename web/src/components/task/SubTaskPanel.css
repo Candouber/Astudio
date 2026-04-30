@@ -1,0 +1,110 @@
+.subtask-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.subtask-panel__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.subtask-panel__role {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--accent-brand);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 2px;
+}
+
+.subtask-panel__title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.subtask-panel__section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.subtask-panel__section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.subtask-panel__section-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.subtask-panel__content-box {
+  font-size: 0.86rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  background: var(--bg-secondary);
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.subtask-panel__output--collapsed {
+  max-height: 200px;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, black 70%, transparent);
+  -webkit-mask-image: linear-gradient(to bottom, black 70%, transparent);
+}
+
+.subtask-panel__cursor {
+  color: var(--accent-brand);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.subtask-panel__blocker-text {
+  color: var(--accent-danger);
+  background: color-mix(in srgb, var(--accent-danger) 6%, var(--bg-primary));
+  border-color: color-mix(in srgb, var(--accent-danger) 20%, transparent);
+}
+
+.subtask-panel__retry-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.subtask-panel__retry-form .input-base {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+}
+
+.subtask-panel__retry-status {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+}
+
+.subtask-panel__retry-actions {
+  display: flex;
+  gap: 8px;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.animate-spin { animation: spin 1s linear infinite; }

@@ -1,0 +1,225 @@
+.task-board {
+  padding: 32px 28px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.task-board__header {
+  margin-bottom: 28px;
+}
+
+.task-board__header h1 {
+  margin-bottom: 16px;
+}
+
+.task-board__filters {
+  display: flex;
+  gap: 8px;
+}
+
+.task-board__filter {
+  padding: 6px 16px;
+  border-radius: 99px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  transition: all var(--transition-fast);
+}
+
+.task-board__filter:hover {
+  border-color: var(--border-color-hover);
+}
+
+.task-board__filter--active {
+  background: var(--accent-brand);
+  color: #fff;
+  border-color: var(--accent-brand);
+}
+
+/* ── Empty ──────────────────────────────────── */
+.task-board__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 80px 0;
+  color: var(--text-muted);
+}
+
+.task-board__empty p {
+  font-size: 1.1rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.task-board__empty span {
+  font-size: 0.85rem;
+}
+
+/* ── Kanban columns ─────────────────────────── */
+.task-board__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 20px;
+}
+
+.task-board__column {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.task-board__col-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  padding-bottom: 10px;
+  border-bottom: 2px solid var(--border-color);
+}
+
+.task-board__col-count {
+  margin-left: auto;
+  font-size: 0.75rem;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  padding: 2px 8px;
+  border-radius: 99px;
+}
+
+.task-board__col-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ── Task row ───────────────────────────────── */
+.task-row {
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.task-row__header {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.task-row__delete {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  opacity: 0;
+  pointer-events: none;          /* 不可见时不拦截点击，避免穿透触发卡片跳转 */
+  transition: opacity var(--transition-fast), color var(--transition-fast);
+}
+
+.task-row:hover .task-row__delete {
+  opacity: 1;
+  pointer-events: auto;          /* 可见后恢复可点击 */
+}
+
+.task-row__delete:hover {
+  color: var(--accent-danger) !important;
+}
+
+/* ── 行内确认条 ──────────────────────────── */
+.task-row__confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  background: #fef2f2;
+  border-radius: var(--radius-md);
+  border: 1px solid #fca5a5;
+  font-size: 0.8rem;
+  color: #7f1d1d;
+}
+
+.task-row__confirm span {
+  flex: 1;
+}
+
+.task-row__confirm-yes {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.78rem;
+  padding: 4px 10px;
+}
+
+.btn-danger {
+  background: #dc2626;
+  color: #fff;
+  border: none;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #b91c1c;
+}
+
+.task-row:hover {
+  border-color: var(--border-color-hover);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.task-row__question {
+  flex: 1;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.task-row__meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.task-row__time {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.task-row--urgent {
+  border-color: #f59e0b !important;
+  background: #fffbeb;
+}
+
+.task-row--urgent:hover {
+  border-color: #d97706 !important;
+  background: #fef3c7;
+}
+
+.task-row__action-hint {
+  margin-top: 8px;
+  font-size: 0.78rem;
+  color: #92400e;
+  font-weight: 500;
+}
+
+.task-row__progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 0.78rem;
+  color: var(--accent-brand);
+}

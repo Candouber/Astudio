@@ -1,0 +1,212 @@
+/* ── Markdown 排版样式 ──────────────────────────────────────────── */
+
+.markdown-body {
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  line-height: 1.8;
+  word-break: break-word;
+}
+
+/* ── 标题 ── */
+.markdown-body h1 {
+  font-size: 1.45rem;
+  font-weight: 700;
+  margin: 1.6em 0 0.6em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border-color);
+  letter-spacing: -0.01em;
+}
+
+.markdown-body h2 {
+  font-size: 1.2rem;
+  font-weight: 650;
+  margin: 1.4em 0 0.5em;
+  padding-bottom: 0.25em;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+}
+
+.markdown-body h3 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin: 1.2em 0 0.4em;
+}
+
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 1em 0 0.3em;
+  color: var(--text-secondary);
+}
+
+.markdown-body h1:first-child,
+.markdown-body h2:first-child,
+.markdown-body h3:first-child {
+  margin-top: 0;
+}
+
+/* ── 段落 ── */
+.markdown-body p {
+  margin: 0 0 1em;
+  color: var(--text-primary);
+}
+
+.markdown-body p:last-child {
+  margin-bottom: 0;
+}
+
+/* ── 列表 ── */
+.markdown-body ul,
+.markdown-body ol {
+  margin: 0 0 1em;
+  padding-left: 1.6em;
+}
+
+.markdown-body li {
+  margin-bottom: 0.3em;
+}
+
+.markdown-body li > p {
+  margin-bottom: 0.4em;
+}
+
+.markdown-body ul ul,
+.markdown-body ol ol,
+.markdown-body ul ol,
+.markdown-body ol ul {
+  margin-bottom: 0;
+}
+
+/* ── 行内代码 ── */
+.markdown-body code:not(pre code) {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 0.15em 0.4em;
+  font-size: 0.84em;
+  font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
+  color: #c7254e;
+}
+
+/* ── 代码块 ── */
+.markdown-body pre {
+  margin: 0 0 1em;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: #f8f9fb !important;
+  overflow-x: auto;
+}
+
+.markdown-body pre code {
+  display: block;
+  padding: 14px 18px;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
+  background: transparent !important;
+  border: none;
+  color: inherit;
+}
+
+/* ── 引用块 ── */
+.markdown-body blockquote {
+  margin: 0 0 1em;
+  padding: 0.6em 1em;
+  border-left: 3px solid var(--accent-brand);
+  background: var(--accent-brand-light);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.markdown-body blockquote p {
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.markdown-body blockquote blockquote {
+  margin-top: 0.5em;
+}
+
+/* ── 表格 ── */
+.markdown-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 1em;
+  font-size: 0.85rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.markdown-body thead th {
+  background: var(--bg-tertiary);
+  font-weight: 600;
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 2px solid var(--border-color);
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.markdown-body tbody td {
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border-color);
+  vertical-align: top;
+}
+
+.markdown-body tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--bg-secondary) 50%, transparent);
+}
+
+.markdown-body tbody tr:hover {
+  background: color-mix(in srgb, var(--accent-brand) 4%, transparent);
+}
+
+/* ── 水平线 ── */
+.markdown-body hr {
+  border: none;
+  border-top: 1px solid var(--border-color);
+  margin: 1.5em 0;
+}
+
+/* ── 图片 ── */
+.markdown-body img {
+  max-width: 100%;
+  border-radius: var(--radius-sm);
+}
+
+/* ── 链接 ── */
+.markdown-body a {
+  color: var(--accent-brand);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color var(--transition-fast);
+}
+
+.markdown-body a:hover {
+  border-bottom-color: var(--accent-brand);
+}
+
+/* ── 强调 ── */
+.markdown-body strong {
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+/* ── 任务列表（GFM） ── */
+.markdown-body input[type="checkbox"] {
+  margin-right: 0.5em;
+  vertical-align: middle;
+}
+
+.markdown-body li:has(> input[type="checkbox"]) {
+  list-style: none;
+  margin-left: -1.2em;
+}
+
+/* ── 删除线 ── */
+.markdown-body del {
+  color: var(--text-muted);
+}

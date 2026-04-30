@@ -1,0 +1,72 @@
+.exec-monitor {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 56px);
+  gap: 0;
+}
+
+.exec-monitor__progress {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 20px;
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+}
+
+.exec-monitor__progress-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.exec-monitor__body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.exec-monitor__canvas {
+  flex: 1;
+  position: relative;
+}
+
+.exec-monitor__canvas--with-panel {
+  flex: 0.65;
+}
+
+.exec-monitor__panel {
+  flex: 0.35;
+  min-width: 320px;
+  max-width: 440px;
+  border-radius: 0;
+  border-top: none;
+  border-right: none;
+  border-bottom: none;
+  overflow-y: auto;
+}
+
+.exec-monitor__controls {
+  border-radius: var(--radius-md) !important;
+  border: 1px solid var(--border-color) !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+
+.exec-monitor__controls button {
+  background: var(--bg-primary) !important;
+  border-bottom: 1px solid var(--border-color) !important;
+  color: var(--text-secondary) !important;
+}
+
+.exec-monitor__controls button:hover {
+  background: var(--bg-secondary) !important;
+}
+
+.exec-monitor__minimap {
+  border-radius: var(--radius-md) !important;
+  border: 1px solid var(--border-color) !important;
+  box-shadow: var(--shadow-sm) !important;
+  background: var(--bg-primary) !important;
+}

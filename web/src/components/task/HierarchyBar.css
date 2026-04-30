@@ -1,0 +1,82 @@
+.hierarchy-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  flex-wrap: wrap;
+}
+
+.hierarchy-bar__step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+  font-weight: 500;
+}
+
+.hierarchy-bar__arrow {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.hierarchy-bar__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+}
+
+.hierarchy-bar__dot--done {
+  background: var(--accent-success);
+}
+
+.hierarchy-bar__progress {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--accent-brand);
+  background: var(--accent-brand-light);
+  padding: 2px 8px;
+  border-radius: 99px;
+}
+
+.hierarchy-bar__status {
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.hierarchy-bar__live {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hierarchy-bar__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 99px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.hierarchy-bar__pill--ok {
+  background: #dbeafe; color: #1e40af; border-color: #bfdbfe;
+}
+
+.hierarchy-bar__pill--warn {
+  background: #fef3c7; color: #92400e; border-color: #fde68a;
+}
+
+.hierarchy-bar__pill--danger {
+  background: #fee2e2; color: #991b1b; border-color: #fecaca;
+}
+
+.hierarchy-bar__pill--neutral {
+  background: var(--bg-tertiary); color: var(--text-secondary);
+}

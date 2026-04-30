@@ -1,0 +1,79 @@
+appId: com.astudio.app
+productName: AStudio
+artifactName: "${productName}-${version}-${os}-${arch}.${ext}"
+icon: build/icon.png
+
+directories:
+  output: release
+
+files:
+  - package.json
+  - build/icon.png
+  - build/icon.icns
+  - web/dist/**
+  - web/electron/**
+  - "!**/*.map"
+  - "!**/.DS_Store"
+
+extraResources:
+  - from: server
+    to: server
+    filter:
+      - "**/*"
+      - "!data/**"
+      - "!logs/**"
+      - "!build/**"
+      - "!dist/**"
+      - "!.venv/**"
+      - "!venv/**"
+      - "!__pycache__/**"
+      - "!**/__pycache__/**"
+      - "!*.spec"
+      - "!*.db"
+      - "!*.db-wal"
+      - "!*.db-shm"
+  - from: build/server-bin
+    to: server-bin
+    filter:
+      - "**/*"
+  - from: web/dist
+    to: web/dist
+    filter:
+      - "**/*"
+
+extraMetadata:
+  main: web/electron/main.cjs
+
+asar: true
+
+mac:
+  icon: build/icon.icns
+  category: public.app-category.productivity
+  identity: null
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: zip
+      arch:
+        - arm64
+        - x64
+
+win:
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+linux:
+  icon: build/icon.png
+  category: Utility
+  target:
+    - target: AppImage
+      arch:
+        - x64
+
+publish:
+  provider: github

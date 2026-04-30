@@ -1,0 +1,466 @@
+.sd {
+  padding: 28px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.sd__topbar {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.sd__topbar-info {
+  flex: 1;
+}
+
+.sd__studio-tokens {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  background: var(--accent-brand-light);
+  border-radius: var(--radius-md);
+  color: var(--accent-brand);
+  font-size: 0.85rem;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.sd__studio-tokens small {
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: var(--accent-brand);
+  opacity: 0.7;
+  margin-left: 2px;
+}
+
+.sd__title {
+  font-size: 1.4rem;
+}
+
+.sd__desc {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.sd__loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  color: var(--text-muted);
+}
+
+/* ── Grid ───────────────────────────────────── */
+.sd__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .sd__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Section header with actions ────────────── */
+.sd__section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.sd__section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.sd__count {
+  font-size: 0.75rem;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  padding: 2px 8px;
+  border-radius: 99px;
+}
+
+.btn-sm {
+  font-size: 0.78rem;
+  padding: 5px 12px;
+}
+
+/* ── 新增成员表单 ─────────────────────────────── */
+.add-member-form {
+  padding: 16px;
+  margin-bottom: 12px;
+  border: 1px dashed var(--accent-brand);
+}
+
+.amf__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9rem;
+  margin-bottom: 12px;
+  color: var(--accent-brand);
+}
+
+.amf__label {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+  margin-top: 10px;
+}
+
+.amf__input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.amf__err {
+  font-size: 0.78rem;
+  color: #dc2626;
+  margin-top: 6px;
+}
+
+.amf__actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+/* ── 技能选择器 ──────────────────────────────── */
+.skill-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.skill-tag {
+  font-size: 0.75rem;
+  padding: 3px 10px;
+  border-radius: 99px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.skill-tag:hover {
+  border-color: var(--accent-brand);
+  color: var(--accent-brand);
+}
+
+.skill-tag--on {
+  background: var(--accent-brand-light);
+  border-color: var(--accent-brand);
+  color: var(--accent-brand);
+  font-weight: 600;
+}
+
+/* ── Agent cards ────────────────────────────── */
+.sd__agents {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.agent-card {
+  padding: 16px;
+}
+
+.agent-card__header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.agent-card__avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--accent-brand-light);
+  color: var(--accent-brand);
+  font-weight: 700;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.agent-card__info {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-card__role-input {
+  font-size: 0.9rem;
+  padding: 3px 8px;
+}
+
+.agent-card__actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.icon-success {
+  color: var(--accent-success) !important;
+}
+
+.icon-danger {
+  color: var(--text-muted);
+  transition: color var(--transition-fast);
+}
+
+.icon-danger:hover {
+  color: #dc2626 !important;
+}
+
+.agent-card__tokens {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  padding: 2px 7px;
+  border-radius: 99px;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+
+.agent-card__edit-skills {
+  margin-top: 10px;
+}
+
+.agent-card__confirm {
+  margin-top: 12px;
+  padding: 12px;
+  background: #fef2f2;
+  border-radius: var(--radius-md);
+  border: 1px solid #fecaca;
+}
+
+.agent-card__confirm p {
+  font-size: 0.83rem;
+  color: #7f1d1d;
+  margin-bottom: 10px;
+}
+
+.agent-card__confirm-btns {
+  display: flex;
+  gap: 8px;
+}
+
+.agent-card__role {
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.agent-card__badge {
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: var(--accent-success-light);
+  color: var(--accent-success);
+  font-weight: 600;
+}
+
+.agent-card__skills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.agent-card__skill {
+  font-size: 0.72rem;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.agent-card__soul-toggle {
+  margin-top: 10px;
+}
+
+.agent-card__soul-toggle .btn {
+  font-size: 0.8rem;
+  gap: 4px;
+  color: var(--text-muted);
+}
+
+.agent-card__soul {
+  margin-top: 8px;
+  padding: 12px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+/* ── Task list ──────────────────────────────── */
+.sd__task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sd__task-item {
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.sd__task-item:hover {
+  border-color: var(--border-color-hover);
+  background: var(--bg-secondary);
+}
+
+.sd__task-q {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.sd__task-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+/* ── 用户记忆 (User Facts) ── */
+.sd__facts-list {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sd__fact-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 0.84rem;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--accent-brand);
+  line-height: 1.5;
+}
+
+.sd__fact-item::before {
+  content: '•';
+  color: var(--accent-brand);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* ──────────────────────────────────────────────
+ * 工作室成长面板 (P0.1 工作室越用越聪明)
+ * ────────────────────────────────────────────── */
+.sd__growth h3 {
+  margin: 0 0 6px;
+}
+
+.sd__growth-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  padding: 2px 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--accent-brand);
+  background: var(--accent-brand-light);
+  border: 1px solid color-mix(in srgb, var(--accent-brand) 30%, transparent);
+  border-radius: 99px;
+}
+
+.sd__growth-hint {
+  margin: 0 0 14px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.sd__growth-block {
+  margin-top: 12px;
+}
+
+.sd__growth-subtitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.sd__growth-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sd__growth-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  font-size: 0.74rem;
+  border-radius: 99px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.sd__growth-chip--cap {
+  color: color-mix(in srgb, var(--accent-brand) 85%, black);
+  border-color: color-mix(in srgb, var(--accent-brand) 30%, transparent);
+  background: color-mix(in srgb, var(--accent-brand) 6%, var(--bg-secondary));
+}
+
+.sd__growth-topics {
+  margin: 0;
+  padding-left: 18px;
+  list-style: disc;
+}
+
+.sd__growth-topic {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  line-height: 1.8;
+}

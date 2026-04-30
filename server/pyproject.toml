@@ -1,0 +1,45 @@
+[project]
+name = "astudio-server"
+version = "0.1.0"
+description = "AStudio - 多 Agent 协作任务执行后端"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "litellm>=1.40.0",
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0",
+    "aiosqlite>=0.20.0",
+    "python-multipart>=0.0.9",
+    "sse-starlette>=2.0.0",
+    "loguru>=0.7.0",
+    "ddgs>=9.5.0",
+    "playwright>=1.55.0",
+]
+
+[project.optional-dependencies]
+oauth = [
+    "oauth-cli-kit>=0.1.0",
+]
+dev = [
+    "ruff>=0.4.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "ruff>=0.4.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]

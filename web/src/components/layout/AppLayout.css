@@ -1,0 +1,25 @@
+.app-layout {
+  display: flex;
+  min-height: 100vh;
+  --sidebar-width: 220px;
+  --sidebar-collapsed-width: 72px;
+}
+
+.app-layout--sidebar-collapsed {
+  --sidebar-width: var(--sidebar-collapsed-width);
+}
+
+.app-main {
+  margin-left: var(--sidebar-width);
+  flex: 1;
+  min-height: 100vh;
+  background: var(--bg-secondary);
+  transition: margin-left var(--transition-base);
+}
+
+@media (max-width: 760px) {
+  .app-layout,
+  .app-layout--sidebar-collapsed {
+    --sidebar-width: 72px;
+  }
+}

@@ -1,0 +1,64 @@
+.selection-toolbar {
+  position: fixed;
+  z-index: 1000;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  background: rgba(18, 26, 42, 0.96);
+  border-radius: calc(var(--radius-md) + 4px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
+  transform: translate(-50%, -100%);
+  animation: sel-toolbar-in 0.15s ease-out;
+}
+
+@keyframes sel-toolbar-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -100%) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -100%) translateY(0);
+  }
+}
+
+.selection-toolbar__btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  background: transparent;
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+  white-space: nowrap;
+}
+
+.selection-toolbar__btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.selection-toolbar__btn--accent {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.selection-toolbar__btn--accent:hover {
+  background: var(--accent-brand);
+}
+
+.selection-toolbar::after {
+  content: '';
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 6px solid rgba(18, 26, 42, 0.96);
+}
