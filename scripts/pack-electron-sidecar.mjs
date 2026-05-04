@@ -8,17 +8,17 @@ const binaryName = process.platform === 'win32' ? 'astudio-server.exe' : 'astudi
 const sidecarPath = join(rootDir, 'build', 'server-bin', binaryName)
 
 function run(command, args) {
-  const executable = process.platform === 'win32' && command === 'pnpm' ? 'pnpm.cmd' : command
-  const result = spawnSync(executable, args, {
+  const result = spawnSync(command, args, {
     cwd: rootDir,
     stdio: 'inherit',
     env: process.env,
+    shell: process.platform === 'win32',
   })
   if (result.error) {
-    console.error(`Failed to run ${executable}: ${result.error.message}`)
+    console.error(`Failed to run ${command}: ${result.error.message}`)
   }
   if (result.status !== 0) {
-    console.error(`Command failed: ${executable} ${args.join(' ')}`)
+    console.error(`Command failed: ${command} ${args.join(' ')}`)
     process.exit(result.status ?? 1)
   }
 }
