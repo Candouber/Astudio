@@ -67,10 +67,14 @@ jobs:
         with:
           name: astudio-${{ matrix.name }}
           path: |
-            release/**
-            !release/**/*.blockmap
-            !release/**/builder-debug.yml
-            !release/**/builder-effective-config.yaml
+            release/*.AppImage
+            release/*.dmg
+            release/*.exe
+            release/*.zip
+            release/*.yml
+            !release/*.blockmap
+            !release/builder-debug.yml
+            !release/builder-effective-config.yaml
           if-no-files-found: error
 
   publish:
