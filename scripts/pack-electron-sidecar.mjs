@@ -8,7 +8,8 @@ const binaryName = process.platform === 'win32' ? 'astudio-server.exe' : 'astudi
 const sidecarPath = join(rootDir, 'build', 'server-bin', binaryName)
 
 function run(command, args) {
-  const result = spawnSync(command, args, {
+  const executable = process.platform === 'win32' && command === 'pnpm' ? 'pnpm.cmd' : command
+  const result = spawnSync(executable, args, {
     cwd: rootDir,
     stdio: 'inherit',
     env: process.env,
