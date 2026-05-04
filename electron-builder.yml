@@ -10,6 +10,7 @@ files:
   - package.json
   - build/icon.png
   - build/icon.icns
+  - build/icon.ico
   - web/dist/**
   - web/electron/**
   - "!**/*.map"
@@ -61,7 +62,7 @@ mac:
         - x64
 
 win:
-  icon: build/icon.png
+  icon: build/icon.ico
   target:
     - target: nsis
       arch:

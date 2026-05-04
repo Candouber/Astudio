@@ -14,7 +14,11 @@ function run(command, args) {
     stdio: 'inherit',
     env: process.env,
   })
+  if (result.error) {
+    console.error(`Failed to run ${executable}: ${result.error.message}`)
+  }
   if (result.status !== 0) {
+    console.error(`Command failed: ${executable} ${args.join(' ')}`)
     process.exit(result.status ?? 1)
   }
 }
