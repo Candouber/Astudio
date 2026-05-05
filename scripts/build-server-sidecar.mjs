@@ -33,6 +33,8 @@ const result = spawnSync(
     '--exclude-module',
     'pkg_resources',
     '--exclude-module',
+    'playwright',
+    '--exclude-module',
     'pandas',
     '--exclude-module',
     'numpy',

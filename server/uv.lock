@@ -154,6 +154,19 @@ wheels = [
 ]
 
 [[package]]
+name = "anyio"
+version = "4.13.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "idna" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/19/14/2c5dd9f512b66549ae92767a9c7b330ae88e1932ca57876909410251fe13/anyio-4.13.0.tar.gz", hash = "sha256:334b70e641fd2221c1505b3890c69882fe4a2df910cba14d97019b90b24439dc", size = 231622 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/da/42/e921fccf5015463e32a3cf6ee7f980a6ed0f395ceeaa45060b61d86486c2/anyio-4.13.0-py3-none-any.whl", hash = "sha256:08b310f9e24a9594186fd75b4f73f4a4152069e3853f1ed8bfbf58369f4ad708", size = 114353 },
+]
+
+[[package]]
 name = "astudio-server"
 version = "0.1.0"
 source = { virtual = "." }
@@ -163,7 +176,6 @@ dependencies = [
     { name = "fastapi" },
     { name = "litellm" },
     { name = "loguru" },
-    { name = "playwright" },
     { name = "pydantic" },
     { name = "python-multipart" },
     { name = "pyyaml" },
@@ -172,6 +184,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+browser = [
+    { name = "playwright" },
+]
 dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -196,7 +211,7 @@ requires-dist = [
     { name = "litellm", specifier = ">=1.40.0" },
     { name = "loguru", specifier = ">=0.7.0" },
     { name = "oauth-cli-kit", marker = "extra == 'oauth'", specifier = ">=0.1.0" },
-    { name = "playwright", specifier = ">=1.55.0" },
+    { name = "playwright", marker = "extra == 'browser'", specifier = ">=1.55.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
@@ -206,26 +221,13 @@ requires-dist = [
     { name = "sse-starlette", specifier = ">=2.0.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0" },
 ]
-provides-extras = ["oauth", "dev"]
+provides-extras = ["browser", "oauth", "dev"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", specifier = ">=0.23.0" },
     { name = "ruff", specifier = ">=0.4.0" },
-]
-
-[[package]]
-name = "anyio"
-version = "4.13.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "idna" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/19/14/2c5dd9f512b66549ae92767a9c7b330ae88e1932ca57876909410251fe13/anyio-4.13.0.tar.gz", hash = "sha256:334b70e641fd2221c1505b3890c69882fe4a2df910cba14d97019b90b24439dc", size = 231622 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/da/42/e921fccf5015463e32a3cf6ee7f980a6ed0f395ceeaa45060b61d86486c2/anyio-4.13.0-py3-none-any.whl", hash = "sha256:08b310f9e24a9594186fd75b4f73f4a4152069e3853f1ed8bfbf58369f4ad708", size = 114353 },
 ]
 
 [[package]]

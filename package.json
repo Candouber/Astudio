@@ -6,7 +6,8 @@
   "private": true,
   "packageManager": "pnpm@8.15.9",
   "scripts": {
-    "setup": "pnpm install && cd server && uv sync && uv run python -m playwright install chromium",
+    "setup": "pnpm install && cd server && uv sync",
+    "setup:browser": "cd server && uv sync --extra browser && uv run python -m playwright install chromium",
     "dev": "npm-run-all --parallel dev:server dev:web",
     "dev:server": "cd server && uv run uvicorn main:app --reload --port 8000",
     "dev:web": "cd web && pnpm run dev",

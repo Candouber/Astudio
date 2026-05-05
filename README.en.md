@@ -207,8 +207,13 @@ pnpm setup
 `pnpm setup` will:
 
 - install root and frontend Node dependencies;
-- run `uv sync` inside `server/`;
-- install Playwright Chromium as the browser-search fallback.
+- run `uv sync` inside `server/`.
+
+Browser-search enhancement is optional. By default, `web_search` uses the configured search provider first, then tries a system Chrome / Edge / Chromium headless CLI fallback when normal search fails. Install the bundled Playwright Chromium only when you need it:
+
+```bash
+pnpm setup:browser
+```
 
 #### Start the Development Environment
 
@@ -344,7 +349,7 @@ Reasoning fields:
 
 Settings saved from the UI are hot-reloaded in normal use. If you edit `data/config.yaml` manually, reopen and save the Settings page or restart the backend so active workers pick up the new config.
 
-Web Search supports DuckDuckGo, Brave, Tavily, SearXNG, and Jina. When normal search fails, the system can fall back to Playwright-powered browser search.
+Web Search supports DuckDuckGo, Brave, Tavily, SearXNG, and Jina. When normal search fails, the system can use the optional Playwright browser search; without Playwright, it tries a system Chrome / Edge / Chromium headless CLI fallback.
 
 ## Local Data
 
@@ -364,7 +369,8 @@ These paths are covered by `.gitignore`. Do not commit API keys, databases, logs
 
 | Command | Description |
 | --- | --- |
-| `pnpm setup` | Install Node, Python, and Playwright dependencies |
+| `pnpm setup` | Install Node and Python dependencies |
+| `pnpm setup:browser` | Optionally install Playwright Chromium browser-search support |
 | `pnpm dev` | Start FastAPI and Vite together |
 | `pnpm start` | Build frontend and serve it from the backend |
 | `pnpm build:web` | Build the frontend |

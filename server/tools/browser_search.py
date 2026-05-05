@@ -14,8 +14,8 @@ async def _launch_browser():
         from playwright.async_api import async_playwright  # noqa: PLC0415
     except ImportError:
         return None, None, (
-            "[Browser search failed] Missing Playwright. Install dependencies and run: "
-            " uv run --project server python -m playwright install chromium"
+            "[Browser search failed] Playwright is optional and is not installed. "
+            "Run `pnpm setup:browser`, or install a system Chrome/Edge/Chromium browser for web_search fallback."
         )
 
     playwright = await async_playwright().start()
@@ -34,7 +34,7 @@ async def _launch_browser():
         await playwright.stop()
         return None, None, (
             f"[Browser search failed] Chromium launch failed: {type(e).__name__}: {e}\n"
-            "Run: uv run --project server python -m playwright install chromium"
+            "Run `pnpm setup:browser`, or install/configure Chrome/Edge/Chromium for web_search fallback."
         )
 
 

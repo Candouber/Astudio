@@ -16,10 +16,12 @@ dependencies = [
     "sse-starlette>=2.0.0",
     "loguru>=0.7.0",
     "ddgs>=9.5.0",
-    "playwright>=1.55.0",
 ]
 
 [project.optional-dependencies]
+browser = [
+    "playwright>=1.55.0",
+]
 oauth = [
     "oauth-cli-kit>=0.1.0",
 ]

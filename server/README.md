@@ -7,6 +7,13 @@ Python 后端服务，基于 FastAPI 构建。
 ```bash
 cd server
 uv sync
+```
+
+Playwright browser search is optional. Install it only if you want the built-in
+browser_search tool instead of relying on a system Chrome/Edge/Chromium fallback:
+
+```bash
+uv sync --extra browser
 uv run python -m playwright install chromium
 ```
 
@@ -16,5 +23,6 @@ uv run python -m playwright install chromium
 uv run uvicorn main:app --reload --port 8000
 ```
 
-`web_search` 会先走配置的搜索 provider。普通搜索失败时，会自动降级到内置
-`browser_search`，使用 Playwright Chromium 打开搜索结果页并提取标题、链接和摘要。
+`web_search` 会先走配置的搜索 provider。普通搜索失败时，会先尝试可选的
+Playwright `browser_search`；如果没有安装 Playwright，会尝试调用系统里的
+Chrome / Edge / Chromium headless CLI 解析搜索结果。

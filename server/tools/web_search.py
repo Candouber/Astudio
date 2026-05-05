@@ -210,7 +210,7 @@ async def _browser_search(query: str, n: int) -> str:
         last_error = f"{type(e).__name__}: {e}"
         logger.warning(f"browser_search tool fallback failed: {last_error}")
 
-    if os.environ.get("WEB_SEARCH_BROWSER_CLI_FALLBACK", "").strip().lower() not in {"1", "true", "yes"}:
+    if os.environ.get("WEB_SEARCH_BROWSER_CLI_FALLBACK", "1").strip().lower() in {"0", "false", "no"}:
         return last_error
 
     search_urls = [f"https://www.bing.com/search?q={quote_plus(query)}"]
