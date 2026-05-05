@@ -21,14 +21,26 @@
   ·
   <a href="./docs/studio-system.md">Studio System</a>
   ·
-  <a href="./docs/desktop-distribution.md">Desktop Distribution</a>
-  ·
   <a href="./CONTRIBUTING.md">Contributing</a>
 </p>
 
 AStudio turns a complex request into a task pipeline that can be routed, reviewed, executed, tracked, and reused. After a user submits a request, Agent Zero classifies the task: simple questions can be answered directly, platform-management requests go to Studio 0, and business tasks are routed to an existing Studio or a newly created specialist Studio. The Studio Leader clarifies requirements, creates a DAG execution plan, assigns Sub-agents, and reviews deliverables. Sub-agents use Skills, attachment tools, search tools, and a task sandbox to complete concrete steps. After execution, the system synthesizes the final result, records cost, and consolidates memory.
 
-The current version is suitable for local use, development, and early desktop preview builds. Model keys, task databases, attachments, sandbox artifacts, and runtime logs stay on the local machine and are ignored by default.
+AStudio runs locally by default. Model keys, task databases, attachments, sandbox artifacts, and runtime logs stay on the local machine and are ignored by default.
+
+## Table of Contents
+
+- [Core Capabilities](#core-capabilities)
+- [Workflow](#workflow)
+- [System Architecture](#system-architecture)
+- [Documentation](#documentation)
+- [Tech Stack](#tech-stack)
+- [Installation](#installation)
+- [Model and Search Configuration](#model-and-search-configuration)
+- [Local Data](#local-data)
+- [Development Commands](#development-commands)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Core Capabilities
 
@@ -44,7 +56,7 @@ The current version is suitable for local use, development, and early desktop pr
 - **Human intervention and cascade reruns**: users can retry blocked nodes or manually edit a step output; downstream steps rerun according to dependency links.
 - **Long-term memory**: completed tasks update participating agents' `soul`, Studio Card topics, capability labels, and user facts.
 - **Observability and recovery**: SSE streams task status, node updates, heartbeats, and pauses; a watchdog handles stale tasks and preserves plans for reruns.
-- **Desktop path**: Electron already supports local backend startup, dynamic ports, user-data storage, sidecar lookup, and GitHub Releases preview packaging.
+- **Desktop app**: the Electron package embeds the frontend and local backend sidecar, then starts with a free local port and user-data directory.
 
 ## Workflow
 
@@ -138,19 +150,39 @@ The README covers the main path. Detailed notes live under `docs/`:
 | [Canvas Engine](./docs/canvas-engine.md) | React Flow, SSE, node state, and canvas interaction |
 | [Context Distillation](./docs/context-distillation.md) | Node summaries, long-term memory, and context compression |
 | [LLM Integration](./docs/llm-integration.md) | LiteLLM, role-based model routing, and hot reload |
-| [Desktop Distribution](./docs/desktop-distribution.md) | Electron, sidecar, release stages, and distribution tradeoffs |
 
 ## Tech Stack
 
 - **Frontend**: React 19, TypeScript, Vite, React Router, Zustand, React Flow, Lucide Icons
 - **Backend**: FastAPI, Pydantic, SQLite WAL, SSE, LiteLLM, Playwright, uv
 - **Orchestration**: Agent Zero, Studio Leader, Sub-agent ReAct, Skill Registry, task workers, watchdog
-- **Desktop**: Electron, electron-builder, PyInstaller sidecar preview path
+- **Desktop**: Electron, electron-builder, PyInstaller sidecar
 - **Package management**: pnpm workspace, uv
 
 ## Installation
 
-### Requirements
+### Option 1: Download the Desktop App
+
+Regular users should install the desktop app. It does not require Node.js, Python, pnpm, or uv.
+
+1. Open [GitHub Releases](https://github.com/Candouber/Astudio/releases).
+2. Download the package for your operating system.
+3. Launch AStudio, then configure model Providers, API keys, and role-based model routing in Settings.
+
+| System | File | Notes |
+| --- | --- | --- |
+| Windows x64 | `AStudio-*-win-x64.exe` | Install or launch directly |
+| macOS Apple Silicon | `AStudio-*-mac-arm64.dmg` | For M-series Macs |
+| macOS Intel | `AStudio-*-mac-x64.dmg` | For Intel Macs |
+| Linux x64 | `AStudio-*-linux-x86_64.AppImage` | Make it executable, then launch |
+
+The desktop package starts the local backend automatically. App data, model config, the database, logs, and sandbox files are written to the system user-data directory instead of the repository directory.
+
+### Option 2: Run from Source
+
+Developers can run AStudio from source.
+
+#### Requirements
 
 - Node.js 20+
 - pnpm 8+, preferably enabled through Corepack
@@ -163,7 +195,7 @@ On macOS, uv can be installed with Homebrew:
 brew install uv
 ```
 
-### Clone and Install Dependencies
+#### Clone and Install Dependencies
 
 ```bash
 git clone <your-repo-url>
@@ -178,7 +210,7 @@ pnpm setup
 - run `uv sync` inside `server/`;
 - install Playwright Chromium as the browser-search fallback.
 
-### Start the Development Environment
+#### Start the Development Environment
 
 ```bash
 pnpm dev
@@ -189,7 +221,7 @@ Open:
 - Web UI: http://127.0.0.1:5173
 - Backend health check: http://127.0.0.1:8000/api/health
 
-### Start the Local Stable Mode
+#### Start the Local Stable Mode
 
 ```bash
 pnpm start
@@ -199,7 +231,7 @@ This builds the frontend and serves `web/dist` through FastAPI. Open:
 
 - AStudio: http://127.0.0.1:8000
 
-### Start Electron
+#### Start Electron
 
 Development:
 
@@ -328,31 +360,6 @@ Common local paths:
 
 These paths are covered by `.gitignore`. Do not commit API keys, databases, logs, sandbox artifacts, or build outputs.
 
-## Desktop Distribution
-
-The repository already includes an Electron entry, backend sidecar build scripts, and a GitHub Actions Release workflow.
-
-Developer preview package:
-
-```bash
-pnpm electron:pack
-```
-
-Preview package with backend sidecar:
-
-```bash
-pnpm electron:pack:sidecar
-```
-
-After pushing a release tag, CI builds macOS, Windows, and Linux artifacts, runs a `/api/health` smoke test, and uploads artifacts to a draft GitHub Release:
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-For now, releases should stay `draft` and `prerelease` until signing, notarization, auto-update, and cross-platform installation are verified. See [Desktop Distribution Plan](./docs/desktop-distribution.md) for details.
-
 ## Development Commands
 
 | Command | Description |
@@ -363,12 +370,12 @@ For now, releases should stay `draft` and `prerelease` until signing, notarizati
 | `pnpm build:web` | Build the frontend |
 | `pnpm electron:dev` | Electron + Vite development mode |
 | `pnpm electron:start` | Build frontend, then start Electron |
-| `pnpm electron:pack` | Create an Electron preview package |
+| `pnpm electron:pack` | Create a local Electron package |
 | `pnpm electron:pack:sidecar` | Build backend sidecar and package the desktop app |
 
 ## Contributing
 
-Contributions are welcome around agent orchestration, Studio memory, task sandboxes, the Skill pool, model routing, desktop distribution, and documentation. Please read [CONTRIBUTING.md](./CONTRIBUTING.md) before starting.
+Contributions are welcome around agent orchestration, Studio memory, task sandboxes, the Skill pool, model routing, the desktop app, and documentation. Please read [CONTRIBUTING.md](./CONTRIBUTING.md) before starting.
 
 ## License
 
