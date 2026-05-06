@@ -10,6 +10,7 @@ from services.llm_service import llm_service
 from tools.context import ToolContext, reset_current_tool_context, set_current_tool_context
 from tools.executor import execute_tool
 from tools.registry import build_tool_schemas
+from utils.language import is_chinese, response_language_instruction
 
 MAX_REACT_STEPS = 20
 _TOOL_RESULT_MAX_CHARS = 12_000
@@ -174,8 +175,10 @@ class SubAgentExecutor:
                 soul_content=soul_content,
                 leader_input=leader_input,
                 bundle_skills_block=bundle_skills_block,
+                language_instruction=response_language_instruction(leader_input),
             )
             tools = await build_tool_schemas(effective_tools)
+            zh_progress = is_chinese(leader_input)
 
             history: List[Dict[str, Any]] = [
                 {"role": "system", "content": system_prompt},
@@ -185,7 +188,8 @@ class SubAgentExecutor:
                         "Execute this sub-task. You may use tools to gather information, run code, "
                         "and operate on files. After completing all necessary steps, call "
                         "`submit_task_deliverable` to submit the result. If you hit an unavoidable "
-                        "blocker, call `report_system_blocker` and report the reason."
+                        "blocker, call `report_system_blocker` and report the reason. "
+                        "Strictly follow the Response Language Policy for deliverables and blockers."
                     ),
                 },
             ]
@@ -210,14 +214,14 @@ class SubAgentExecutor:
                 current_tools = protocol_tools if force_finalization else tools
                 tool_choice = "required" if force_finalization else None
                 if force_finalization:
-                    await _emit("Finalizing result...")
+                    await _emit("正在收口结果..." if zh_progress else "Finalizing result...")
                     if not history or history[-1].get("content") != finalization_reason:
                         history.append({
                             "role": "user",
                             "content": finalization_reason,
                         })
                 else:
-                    await _emit(f"Thinking... (step {step + 1})")
+                    await _emit(f"思考中...（第 {step + 1} 步）" if zh_progress else f"Thinking... (step {step + 1})")
 
                 try:
                     response, step_tokens = await llm_service.chat_with_usage(
@@ -234,8 +238,15 @@ class SubAgentExecutor:
                     return {
                         "status": "blocked",
                         "blocker_reason": (
-                            f"LLM service is unavailable after retry: {llm_err}\n"
-                            "Suggestion: check network connectivity or proxy settings, then retry this step later."
+                            (
+                                f"LLM 服务重试后仍不可用：{llm_err}\n"
+                                "建议：检查网络连接或代理设置，然后稍后重试该步骤。"
+                            )
+                            if zh_progress
+                            else (
+                                f"LLM service is unavailable after retry: {llm_err}\n"
+                                "Suggestion: check network connectivity or proxy settings, then retry this step later."
+                            )
                         ),
                         "tokens": total_tokens,
                     }
@@ -247,7 +258,7 @@ class SubAgentExecutor:
                             f"[{agent_role}] Step {step+1}: no tool call; accepting plain text "
                             f"as deliverable, len={len(plain_text)}, tokens={total_tokens}"
                         )
-                        await _emit("Submitting deliverable...")
+                        await _emit("正在提交交付结果..." if zh_progress else "Submitting deliverable...")
                         return {
                             "status": "completed",
                             "deliverable": plain_text.strip(),
@@ -291,7 +302,11 @@ class SubAgentExecutor:
 
                 if real_calls:
                     tool_summary = ", ".join(tc.function.name for tc in real_calls)
-                    await _emit(f"Calling tools: {tool_summary}...")
+                    await _emit(
+                        f"正在调用工具: {tool_summary}..."
+                        if zh_progress
+                        else f"Calling tools: {tool_summary}..."
+                    )
 
                     async def _exec(tc):
                         tool_name = tc.function.name
@@ -308,7 +323,11 @@ class SubAgentExecutor:
                         return tc, observation, failed
 
                     tool_results = await asyncio.gather(*[_exec(tc) for tc in real_calls])
-                    await _emit(f"Processing results from {tool_summary}...")
+                    await _emit(
+                        f"正在处理工具结果: {tool_summary}..."
+                        if zh_progress
+                        else f"Processing results from {tool_summary}..."
+                    )
                     failed_count = 0
                     for tc, observation, failed in tool_results:
                         if failed:
@@ -329,6 +348,7 @@ class SubAgentExecutor:
                             "Stop calling information-gathering tools now. Choose exactly one protocol tool:\n"
                             "- `submit_task_deliverable` if you can provide a useful best-effort result from the available context, clearly marking unverified parts.\n"
                             "- `report_system_blocker` if the missing tool results make the task impossible to complete safely.\n"
+                            "Follow the Response Language Policy for the submitted deliverable or blocker reason.\n"
                         )
                         logger.warning(
                             f"[{agent_role}] 连续工具失败 {consecutive_tool_failures} 次，进入强制收口"
@@ -363,20 +383,31 @@ class SubAgentExecutor:
                         logger.info(
                             f"[{agent_role}] 任务完成，deliverable 长度={len(deliverable)}, tokens={total_tokens}"
                         )
-                        await _emit("Submitting deliverable...")
+                        await _emit("正在提交交付结果..." if zh_progress else "Submitting deliverable...")
                         return {"status": "completed", "deliverable": deliverable, "tokens": total_tokens}
 
                     reason = arguments.get("reason", "")
                     logger.warning(f"[{agent_role}] 任务阻塞: {reason[:80]}, tokens={total_tokens}")
-                    await _emit(f"Reporting blocker: {reason[:60]}")
+                    await _emit(
+                        f"正在上报阻塞: {reason[:60]}"
+                        if zh_progress
+                        else f"Reporting blocker: {reason[:60]}"
+                    )
                     return {"status": "blocked", "blocker_reason": reason, "tokens": total_tokens}
 
             logger.error(f"[{agent_role}] 超过最大 ReAct 步数 {MAX_REACT_STEPS}，强制阻塞")
             return {
                 "status": "blocked",
                 "blocker_reason": (
-                    f"Execution exceeded the maximum step limit ({MAX_REACT_STEPS} steps). "
-                    "Ask the Leader to split the task or provide clearer instructions."
+                    (
+                        f"执行超过最大步骤限制（{MAX_REACT_STEPS} 步）。"
+                        "请让 Leader 拆分任务或提供更清晰的指令。"
+                    )
+                    if is_chinese(leader_input)
+                    else (
+                        f"Execution exceeded the maximum step limit ({MAX_REACT_STEPS} steps). "
+                        "Ask the Leader to split the task or provide clearer instructions."
+                    )
                 ),
                 "tokens": total_tokens,
             }

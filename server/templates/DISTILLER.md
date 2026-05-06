@@ -14,7 +14,9 @@ Your job is to perform **high-density information compression** on each expert's
 {output_text}
 
 ## Execution Instructions
-Distill this stage's interaction and conclusion into a **structured English summary of no more than 200 words**.
+{language_instruction}
+
+Distill this stage's interaction and conclusion into a **structured summary of no more than 200 words**.
 When distilling:
 1. Ignore greetings, unimportant reasoning traces, and auxiliary explanation.
 2. Clearly identify key decisions, core issues found, and effective outputs produced, such as the core code logic that was created.

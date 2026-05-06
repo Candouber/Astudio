@@ -10,6 +10,7 @@ from agents.context import ContextBuilder
 from services.llm_service import llm_service
 from storage.studio_store import StudioStore
 from storage.task_store import TaskStore
+from utils.language import is_chinese, response_language_instruction
 
 
 class AgentZero:
@@ -41,7 +42,10 @@ class AgentZero:
             str(c.get("id")): str(c.get("scenario") or "") for c in cards
         }
 
-        system_prompt = ContextBuilder.build_agent_zero(studio_cards_json=cards_json)
+        system_prompt = ContextBuilder.build_agent_zero(
+            studio_cards_json=cards_json,
+            language_instruction=response_language_instruction(question),
+        )
 
         response_str = await llm_service.chat(
             messages=[
@@ -184,46 +188,47 @@ class AgentZero:
     @staticmethod
     def _build_business_studio_create(question: str) -> Dict[str, Any]:
         text = question.lower()
+        chinese = is_chinese(question)
         if re.search(r"(代码|开发|程序|前端|后端|api|bug|软件|app|网站|网页|python|java|go|typescript|react)", text):
             return {
                 "action": "create_studio",
-                "studio_name": "Software Development Studio",
-                "leader_role": "Technical Lead",
-                "category": "Software Development",
+                "studio_name": "软件开发工作室" if chinese else "Software Development Studio",
+                "leader_role": "技术负责人" if chinese else "Technical Lead",
+                "category": "软件开发" if chinese else "Software Development",
             }
         if re.search(r"(数据|分析|算法|poi|aoi|路网|卫星|影像|gis|地图|地理|模型|评估|测评)", text):
             return {
                 "action": "create_studio",
-                "studio_name": "Data Analysis and Solution Studio",
-                "leader_role": "Data Solutions Lead",
-                "category": "Data Analysis and Algorithmic Solutions",
+                "studio_name": "数据分析与方案工作室" if chinese else "Data Analysis and Solution Studio",
+                "leader_role": "数据方案负责人" if chinese else "Data Solutions Lead",
+                "category": "数据分析与算法方案" if chinese else "Data Analysis and Algorithmic Solutions",
             }
         if re.search(r"(旅行|旅游|行程|酒店|机票|包车|攻略)", text):
             return {
                 "action": "create_studio",
-                "studio_name": "Travel Planning Studio",
-                "leader_role": "Travel Planning Lead",
-                "category": "Travel Planning",
+                "studio_name": "旅行规划工作室" if chinese else "Travel Planning Studio",
+                "leader_role": "旅行规划负责人" if chinese else "Travel Planning Lead",
+                "category": "旅行规划" if chinese else "Travel Planning",
             }
         if re.search(r"(面试|求职|简历|jd|岗位|职业)", text):
             return {
                 "action": "create_studio",
-                "studio_name": "Career Development Studio",
-                "leader_role": "Career Coaching Lead",
-                "category": "Career Development",
+                "studio_name": "职业发展工作室" if chinese else "Career Development Studio",
+                "leader_role": "职业辅导负责人" if chinese else "Career Coaching Lead",
+                "category": "职业发展" if chinese else "Career Development",
             }
         if re.search(r"(文案|文章|报告|内容|写作|脚本)", text):
             return {
                 "action": "create_studio",
-                "studio_name": "Content Creation Studio",
-                "leader_role": "Content Strategy Lead",
-                "category": "Content Creation",
+                "studio_name": "内容创作工作室" if chinese else "Content Creation Studio",
+                "leader_role": "内容策略负责人" if chinese else "Content Strategy Lead",
+                "category": "内容创作" if chinese else "Content Creation",
             }
         return {
             "action": "create_studio",
-            "studio_name": "General Solutions Studio",
-            "leader_role": "Task Planning Lead",
-            "category": "General Business Planning",
+            "studio_name": "通用方案工作室" if chinese else "General Solutions Studio",
+            "leader_role": "任务规划负责人" if chinese else "Task Planning Lead",
+            "category": "通用业务规划" if chinese else "General Business Planning",
         }
 
     @staticmethod
@@ -330,10 +335,14 @@ class AgentZero:
         """
         system_prompt = ContextBuilder.build_synthesis(
             user_question=question,
-            sub_agent_findings=sub_agent_findings
+            sub_agent_findings=sub_agent_findings,
+            language_instruction=response_language_instruction(question, subject="the final answer"),
         )
 
-        user_prompt = "Based on the materials and constraints above, provide the final conclusion."
+        user_prompt = (
+            "Based on the materials and constraints above, provide the final conclusion. "
+            "Strictly follow the Response Language Policy."
+        )
         if extra_instruction:
             user_prompt = f"{user_prompt}\n\n{extra_instruction}"
 

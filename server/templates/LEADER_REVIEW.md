@@ -15,6 +15,8 @@ You have just received a completion report from an employee for a work order you
 {deliverable}
 ```
 
+{language_instruction}
+
 ## Review Instructions
 
 Carefully compare the **Original Work Order Requirement** with the **Employee Deliverable** and decide:
@@ -43,3 +45,5 @@ or:
   "feedback": "specifically explain what is missing, what is wrong, and how to revise it clearly enough for the employee to act on"
 }}
 ```
+
+If `feedback` is non-empty, write it according to the Response Language Policy.

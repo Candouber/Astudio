@@ -24,6 +24,7 @@ from storage.database import get_db
 from storage.sandbox_store import SandboxStore
 from storage.studio_store import StudioStore
 from storage.task_store import TaskStore
+from utils.language import is_chinese, response_language_instruction
 
 MAX_RECRUIT_RETRIES = 3
 MAX_REVIEW_RETRIES = 2
@@ -112,6 +113,33 @@ def _iteration_x_offset(task: Task | None) -> int:
     return idx * 560
 
 
+def _default_attachment_question(question: str) -> str:
+    if is_chinese(question):
+        return "请分析我上传的附件，然后给出结论和建议。"
+    return "Analyze the attachments I uploaded, then provide conclusions and recommendations."
+
+
+def _plan_review_text(steps: list, source_text: str, *, clarified: bool = False) -> str:
+    plan_details = "\n".join([
+        f"- [{s.get('id')}] [{s.get('assign_to_role')}] {s.get('step_label')}"
+        + (f" (depends_on: {s.get('depends_on')})" if s.get("depends_on") else "")
+        for s in steps
+    ])
+    if is_chinese(source_text):
+        title = "Leader 执行方案（已包含用户补充信息）" if clarified else "Leader 执行方案"
+        return f"{title}：\n{plan_details}\n\n请审阅并批准开始执行，或补充修改意见。"
+    title = "Leader execution plan (including user clarifications)" if clarified else "Leader execution plan"
+    return f"{title}:\n{plan_details}\n\nReview and approve to start, or add revision feedback."
+
+
+def _not_answered_text(source_text: str) -> str:
+    return "未回答" if is_chinese(source_text) else "Not answered"
+
+
+def _none_text(source_text: str) -> str:
+    return "无" if is_chinese(source_text) else "None"
+
+
 router = APIRouter()
 task_store = TaskStore()
 studio_store = StudioStore()
@@ -150,7 +178,8 @@ async def ask_question_with_attachments(
     question: str = Form(""),
     files: list[UploadFile] | None = File(default=None),
 ):
-    task_question = question.strip() or "Analyze the attachments I uploaded, then provide conclusions and recommendations."
+    raw_question = question.strip()
+    task_question = raw_question or _default_attachment_question(raw_question)
     task = await task_store.create(question=task_question)
     try:
         attachments = await save_task_attachments(task.id, files or [])
@@ -258,11 +287,11 @@ async def _run_ask_pipeline(task_id: str, question: str, preferred_studio_id: st
         studio_info["id"] = "studio_0"
         studio_info["scenario"] = route_res.get("studio_scenario") or "Studio 0"
         await task_store.set_status_message(task_id, enc("backendTaskStatus.agent_zero_direct"))
-        answer = route_res.get("answer", "Direct answer completed.")
+        answer = route_res.get("answer") or ("已完成直接回答。" if is_chinese(question) else "Direct answer completed.")
         node_id = str(uuid.uuid4())[:8]
         root_node = PathNode(
             id=node_id, type="agent_zero", agent_role="Agent Zero",
-            step_label="Direct Answer", input=question, output=answer,
+            step_label="直接回答" if is_chinese(question) else "Direct Answer", input=question, output=answer,
             status="completed", position={"x": 400 + x_offset, "y": 50}
         )
         await task_store.add_node(task_id, root_node)
@@ -313,19 +342,22 @@ async def _run_ask_pipeline(task_id: str, question: str, preferred_studio_id: st
     steps = plan_data.get("steps", [])
     _validate_dag(steps)
 
-    plan_details = "\n".join([
-        f"- [{s.get('id')}] [{s.get('assign_to_role')}] {s.get('step_label')}"
-        + (f" (depends_on: {s.get('depends_on')})" if s.get("depends_on") else "")
-        for s in steps
-    ])
-    plan_str = f"Leader execution plan:\n{plan_details}\n\nReview and approve to start, or add revision feedback."
+    plan_str = _plan_review_text(steps, question)
 
     task_snap = await task_store.get(task_id)
     x_offset = _iteration_x_offset(task_snap)
     node_id = str(uuid.uuid4())[:8]
     root_node = PathNode(
         id=node_id, type="agent_zero", agent_role="CEO",
-        step_label="Plan Review" if not task_snap or len(task_snap.iterations) <= 1 else f"{task_snap.iterations[-1].title or 'Continue Iteration'}: Plan Approval",
+        step_label=(
+            "方案审批"
+            if is_chinese(question) and (not task_snap or len(task_snap.iterations) <= 1)
+            else (
+                f"{task_snap.iterations[-1].title or ('继续迭代' if is_chinese(question) else 'Continue Iteration')}: {'方案审批' if is_chinese(question) else 'Plan Approval'}"
+                if task_snap and len(task_snap.iterations) > 1
+                else "Plan Review"
+            )
+        ),
         input=question, output=plan_str,
         status="pending", position={"x": 400 + x_offset, "y": 50}
     )
@@ -548,14 +580,15 @@ async def clarify_task(task_id: str, request: Request, payload: dict):
             return {"event": "status", "data": json.dumps(payload)}
 
         # 将原始问题 + 用户的澄清答案合并交给 Leader 重新规划
+        not_answered = _not_answered_text(task.question)
         clarification_context = "\n".join([
-            f"Q: {q.get('question', '')}\nA: {answers.get(q.get('id', ''), '(Not answered)')}"
+            f"Q: {q.get('question', '')}\nA: {answers.get(q.get('id', ''), f'({not_answered})')}"
             for q in task.clarification_questions
         ])
         goal_with_answers = (
             f"{task.question}\n\n"
             "---\n"
-            "## User Clarifications (re-plan based on these answers)\n\n"
+            f"## {'用户补充信息（请基于这些回答重新规划）' if is_chinese(task.question) else 'User Clarifications (re-plan based on these answers)'}\n\n"
             f"{clarification_context}"
         )
 
@@ -564,20 +597,13 @@ async def clarify_task(task_id: str, request: Request, payload: dict):
         steps = plan_data.get("steps", [])
         _validate_dag(steps)
 
-        plan_details = "\n".join([
-            f"- [{s.get('id')}] [{s.get('assign_to_role')}] {s.get('step_label')}"
-            + (f" (depends_on: {s.get('depends_on')})" if s.get('depends_on') else "")
-            for s in steps
-        ])
-        plan_str = (
-            f"Leader execution plan (including user clarifications):\n"
-            f"{plan_details}\n\nReview and approve to start, or add revision feedback."
-        )
+        plan_str = _plan_review_text(steps, task.question, clarified=True)
         x_offset = _iteration_x_offset(await task_store.get(task_id))
         node_id = str(uuid.uuid4())[:8]
         root_node = PathNode(
             id=node_id, type="agent_zero", agent_role="CEO",
-            step_label="Plan Review (Clarifications Included)", input=task.question, output=plan_str,
+            step_label="方案审批（已包含补充信息）" if is_chinese(task.question) else "Plan Review (Clarifications Included)",
+            input=task.question, output=plan_str,
             status="pending", position={"x": 400 + x_offset, "y": 50}
         )
         await task_store.add_node(task_id, root_node)
@@ -619,8 +645,8 @@ async def rerun_original(task_id: str):
 
     await task_store.begin_iteration(
         task_id,
-        instruction="Rerun using the previously saved plan",
-        title="Rerun Original Plan",
+        instruction="沿用此前保存的方案重新执行" if is_chinese(task.question) else "Rerun using the previously saved plan",
+        title="重跑原方案" if is_chinese(task.question) else "Rerun Original Plan",
         source_node_id=task.nodes[-1].id if task.nodes else None,
     )
     await task_store.save_plan_steps(task_id, studio_id, steps)
@@ -628,9 +654,9 @@ async def rerun_original(task_id: str):
         id=str(uuid.uuid4())[:8],
         type="agent_zero",
         agent_role="CEO",
-        step_label="Rerun Original Plan",
+        step_label="重跑原方案" if is_chinese(task.question) else "Rerun Original Plan",
         input=task.question,
-        output="Rerun using the previously saved plan.",
+        output="沿用此前保存的方案重新执行。" if is_chinese(task.question) else "Rerun using the previously saved plan.",
         status="pending",
         position={"x": 400 + _iteration_x_offset(await task_store.get(task_id)), "y": 50},
     )
@@ -767,7 +793,10 @@ async def _execute_background_orchestration(task_id: str, studio_id: str, route_
             steps = route_cmd.get("steps", [])
 
             if feedback:
-                question_with_feedback = task.question + f"\n[User requested plan revision: {feedback}]"
+                if is_chinese(task.question or feedback):
+                    question_with_feedback = task.question + f"\n[用户请求修改方案：{feedback}]"
+                else:
+                    question_with_feedback = task.question + f"\n[User requested plan revision: {feedback}]"
                 await task_store.update_task_status(task_id, "planning")
                 plan_data = await _run_leader_planning(task_id, studio_id, question_with_feedback)
                 steps = plan_data.get("steps", [])
@@ -986,12 +1015,8 @@ def _inject_context_by_deps(base_input: str, depends_on: list[str], dep_results:
         f"### [{v['role']}] {v['step']}\n{v['deliverable']}"
         for k, v in dep_results.items() if k in depends_on
     ]
-    return (
-        f"{base_input}\n\n"
-        "---\n"
-        "## Outputs from Your Prerequisite Steps (continue from this basis)\n\n"
-        + "\n\n".join(sections)
-    )
+    heading = "## 前置步骤输出（请基于这些内容继续）" if is_chinese(base_input) else "## Outputs from Your Prerequisite Steps (continue from this basis)"
+    return f"{base_input}\n\n---\n{heading}\n\n" + "\n\n".join(sections)
 
 
 async def _resume_downstream_cascade(
@@ -1187,9 +1212,14 @@ async def _run_employee_with_review(
         while attempt <= MAX_REVIEW_RETRIES:
             actual_input = input_ctx
             if extra_feedback:
+                feedback_title = (
+                    "[Leader 质量复核反馈：请根据以下问题修改并重新提交]"
+                    if is_chinese(input_ctx)
+                    else "[Leader quality review feedback: revise and resubmit to address the issues below]"
+                )
                 actual_input += (
                     "\n\n---\n"
-                    "[Leader quality review feedback: revise and resubmit to address the issues below]\n"
+                    f"{feedback_title}\n"
                     f"{extra_feedback}"
                 )
 
@@ -1223,7 +1253,8 @@ async def _run_employee_with_review(
             # 员工完成 → 送质检
             deliverable = res.get("deliverable", "")
             await task_store.update_sub_task_review(sub_task_id, "pending_review")
-            await task_store.update_node_status(ui_node_id, "running", f"[Reviewing] {deliverable[:80]}...")
+            review_label = "复核中" if is_chinese(original_spec or input_ctx) else "Reviewing"
+            await task_store.update_node_status(ui_node_id, "running", f"[{review_label}] {deliverable[:80]}...")
 
             review = await studio_leader.review_sub_task(studio_id, step_lab, original_spec, deliverable)
 
@@ -1235,7 +1266,8 @@ async def _run_employee_with_review(
             else:
                 extra_feedback = review["feedback"]
                 await task_store.update_sub_task_review(sub_task_id, "revision_requested", extra_feedback)
-                await task_store.update_node_status(ui_node_id, "running", f"[Revision requested] {extra_feedback[:80]}")
+                revision_label = "需要修改" if is_chinese(original_spec or input_ctx) else "Revision requested"
+                await task_store.update_node_status(ui_node_id, "running", f"[{revision_label}] {extra_feedback[:80]}")
                 attempt += 1
         else:
             # 达到最大重试次数，强制接受最后一次产出
@@ -1306,9 +1338,14 @@ async def retry_step(task_id: str, request: Request, payload: dict):
         studio_id = sub_task.studio_id or task.studio_id or "studio_0"
         input_ctx = sub_task.input_context
         if extra_context:
+            supplemental_heading = (
+                "## 用户补充信息（请基于这些内容重试）"
+                if is_chinese(input_ctx or task.question)
+                else "## User Supplemental Information (retry using this context)"
+            )
             input_ctx += (
                 "\n\n---\n"
-                "## User Supplemental Information (retry using this context)\n\n"
+                f"{supplemental_heading}\n\n"
                 f"{extra_context}"
             )
 
@@ -1650,7 +1687,8 @@ async def annotate(task_id: str, payload: dict):
                     "a studio member's output and asked a question.\n"
                     "Answer precisely using the full output context. Keep the answer concise, accurate, "
                     "and directly relevant.\n"
-                    "Markdown is allowed."
+                    "Markdown is allowed.\n\n"
+                    f"{response_language_instruction(question or task.question, subject='the annotation answer')}"
                 ),
             },
             {
@@ -1684,7 +1722,11 @@ async def annotate(task_id: str, payload: dict):
                     }
         except Exception as e:
             logger.exception(f"批注 AI 回答失败: {e}")
-            err_msg = f"回答生成失败: {type(e).__name__}"
+            err_msg = (
+                f"回答生成失败: {type(e).__name__}"
+                if is_chinese(question or task.question)
+                else f"Answer generation failed: {type(e).__name__}"
+            )
             full_answer = err_msg
             yield {"event": "chunk", "data": json.dumps({"text": err_msg, "ann_id": ann_id})}
 
@@ -1766,8 +1808,10 @@ async def process_selection(task_id: str, payload: dict):
             f"- {sub_task.step_label} / {sub_task.assign_to_role}: {snippet}"
         )
 
+    lang_policy = response_language_instruction(instruction or task.question)
     derived_question = (
         "You are continuing work based on the result of an existing task.\n\n"
+        f"{lang_policy}\n\n"
         f"## Original Task Goal\n{task.question}\n\n"
         f"## Original Task ID\n{task.id}\n"
         f"## Original Task Status\n{task.status}\n\n"
@@ -1777,10 +1821,10 @@ async def process_selection(task_id: str, payload: dict):
         f"## User-Selected Text\n> {selected_text}\n\n"
         f"## How the User Wants It Processed\n{instruction}\n\n"
         f"## Conversation Context\n"
-        f"{chr(10).join(clarification_pairs) if clarification_pairs else 'No extra clarifications.'}\n\n"
+        f"{chr(10).join(clarification_pairs) if clarification_pairs else ('无额外澄清。' if is_chinese(instruction or task.question) else 'No extra clarifications.')}\n\n"
         f"## Recent Step Summaries\n"
-        f"{chr(10).join(sub_task_context) if sub_task_context else 'No step summaries.'}\n\n"
-        f"## Full Source Context\n{node_context or 'No full context available.'}\n\n"
+        f"{chr(10).join(sub_task_context) if sub_task_context else ('无步骤摘要。' if is_chinese(instruction or task.question) else 'No step summaries.')}\n\n"
+        f"## Full Source Context\n{node_context or ('无完整上下文。' if is_chinese(instruction or task.question) else 'No full context available.')}\n\n"
         "Based on the context above, treat this as a new task and continue execution."
     )
 
@@ -1857,8 +1901,11 @@ async def iterate_selection(task_id: str, payload: dict):
             f"- {sub_task.step_label} / {sub_task.assign_to_role} / {sub_task.status}: {snippet}"
         )
 
+    lang_policy = response_language_instruction(instruction or task.question)
+    zh_iter = is_chinese(instruction or task.question)
     iteration_goal = (
         "You are incrementally iterating on an existing task artifact, not starting a completely independent new job.\n\n"
+        f"{lang_policy}\n\n"
         f"## Current Task Goal\n{task.question}\n\n"
         f"## Current Task ID\n{task.id}\n"
         f"## Current Task Status\n{task.status}\n\n"
@@ -1871,10 +1918,10 @@ async def iterate_selection(task_id: str, payload: dict):
         f"## User-Selected Text\n> {selected_text}\n\n"
         f"## User Iteration Request\n{instruction}\n\n"
         f"## Conversation Context\n"
-        f"{chr(10).join(clarification_pairs) if clarification_pairs else 'No extra clarifications.'}\n\n"
+        f"{chr(10).join(clarification_pairs) if clarification_pairs else ('无额外澄清。' if zh_iter else 'No extra clarifications.')}\n\n"
         f"## Recent Output Summaries from Current Task\n"
-        f"{chr(10).join(sub_task_context) if sub_task_context else 'No step summaries.'}\n\n"
-        f"## Full Context Containing the Current Segment\n{node_context or 'No full context available.'}\n\n"
+        f"{chr(10).join(sub_task_context) if sub_task_context else ('无步骤摘要。' if zh_iter else 'No step summaries.')}\n\n"
+        f"## Full Context Containing the Current Segment\n{node_context or ('无完整上下文。' if zh_iter else 'No full context available.')}\n\n"
         "## Studio and Sandbox Strategy\n"
         "For this round, let Agent Zero reevaluate the suitable studio path based on the new request. "
         "Do not mechanically reuse the previous studio only for historical consistency.\n"
@@ -1887,7 +1934,7 @@ async def iterate_selection(task_id: str, payload: dict):
     await task_store.begin_iteration(
         task_id,
         instruction=instruction,
-        title="Iterate from Selection",
+        title="基于选区迭代" if zh_iter else "Iterate from Selection",
         source_node_id=node_id,
     )
     await task_store.update_task_status(task_id, "planning")
@@ -1958,19 +2005,22 @@ async def iterate_task(task_id: str, payload: dict):
         if role in ("user", "assistant") and content:
             recent_chat.append(f"{role.upper()}: {content}")
 
+    lang_policy = response_language_instruction(instruction or task.question)
+    zh_iter = is_chinese(instruction or task.question)
     iteration_goal = (
         "You are incrementally iterating on the current result of an existing task, not creating a brand-new job.\n\n"
+        f"{lang_policy}\n\n"
         f"## Current Task Goal\n{task.question}\n\n"
         f"## Current Task ID\n{task.id}\n"
         f"## Current Task Status\n{task.status}\n\n"
         f"## New User Request\n{instruction}\n\n"
         f"## Result Chat Context\n"
-        f"{chr(10).join(recent_chat) if recent_chat else 'No extra chat context.'}\n\n"
+        f"{chr(10).join(recent_chat) if recent_chat else ('无额外对话上下文。' if zh_iter else 'No extra chat context.')}\n\n"
         f"## Requirement Clarifications\n"
-        f"{chr(10).join(clarification_pairs) if clarification_pairs else 'No extra clarifications.'}\n\n"
+        f"{chr(10).join(clarification_pairs) if clarification_pairs else ('无额外澄清。' if zh_iter else 'No extra clarifications.')}\n\n"
         f"## Recent Output Summaries from Current Task\n"
-        f"{chr(10).join(sub_task_context) if sub_task_context else 'No step summaries.'}\n\n"
-        f"## Current Synthesis Result\n{synthesis or 'No synthesis result yet.'}\n\n"
+        f"{chr(10).join(sub_task_context) if sub_task_context else ('无步骤摘要。' if zh_iter else 'No step summaries.')}\n\n"
+        f"## Current Synthesis Result\n{synthesis or ('暂无最终汇总。' if zh_iter else 'No synthesis result yet.')}\n\n"
         "## Studio and Sandbox Strategy\n"
         "For this round, let Agent Zero reevaluate the suitable studio path based on the new request. "
         "Do not mechanically reuse the previous studio only for historical consistency.\n"
@@ -1984,7 +2034,7 @@ async def iterate_task(task_id: str, payload: dict):
     await task_store.begin_iteration(
         task_id,
         instruction=instruction,
-        title="Iterate from Result",
+        title="基于结果迭代" if zh_iter else "Iterate from Result",
         source_node_id=source_node_id,
     )
     await task_store.update_task_status(task_id, "planning")
@@ -2037,6 +2087,14 @@ async def result_chat(task_id: str, payload: dict):
         question = questions_by_id.get(str(qid), str(qid))
         clarification_pairs.append(f"- {question}: {answer}")
 
+    latest_user_text = next(
+        (
+            (msg.get("content") or "").strip()
+            for msg in reversed(messages)
+            if (msg.get("role") or "").strip() == "user" and (msg.get("content") or "").strip()
+        ),
+        task.question,
+    )
     llm_messages = [
         {
             "role": "system",
@@ -2046,7 +2104,8 @@ async def result_chat(task_id: str, payload: dict):
                 "Answer using the task goal, synthesis result, step-output summaries, and chat context.\n"
                 "Prioritize accurate explanation of the current result, cite the basis when useful, "
                 "and suggest next steps when necessary.\n"
-                "Keep the answer concise and specific. Markdown is allowed."
+                "Keep the answer concise and specific. Markdown is allowed.\n\n"
+                f"{response_language_instruction(latest_user_text, subject='the result-chat reply')}"
             ),
         },
         {
@@ -2054,9 +2113,9 @@ async def result_chat(task_id: str, payload: dict):
             "content": (
                 f"## Original Task Goal\n{task.question}\n\n"
                 f"## Current Task Status\n{task.status}\n\n"
-                f"## Requirement Clarifications\n{chr(10).join(clarification_pairs) if clarification_pairs else 'None'}\n\n"
-                f"## Synthesis Result\n{synthesis or 'No synthesis result yet.'}\n\n"
-                f"## Recent Step Summaries\n{chr(10).join(sub_task_context) if sub_task_context else 'No step summaries.'}"
+                f"## Requirement Clarifications\n{chr(10).join(clarification_pairs) if clarification_pairs else _none_text(latest_user_text)}\n\n"
+                f"## Synthesis Result\n{synthesis or ('暂无最终汇总。' if is_chinese(latest_user_text) else 'No synthesis result yet.')}\n\n"
+                f"## Recent Step Summaries\n{chr(10).join(sub_task_context) if sub_task_context else ('无步骤摘要。' if is_chinese(latest_user_text) else 'No step summaries.')}"
             ),
         },
     ]
@@ -2081,7 +2140,12 @@ async def result_chat(task_id: str, payload: dict):
                     yield {"event": "chunk", "data": json.dumps({"text": chunk})}
         except Exception as e:
             logger.exception(f"结果对话失败: {e}")
-            yield {"event": "chunk", "data": json.dumps({"text": f'回答生成失败: {type(e).__name__}'})}
+            err_text = (
+                f"回答生成失败: {type(e).__name__}"
+                if is_chinese(latest_user_text)
+                else f"Answer generation failed: {type(e).__name__}"
+            )
+            yield {"event": "chunk", "data": json.dumps({"text": err_text})}
 
         yield {"event": "done", "data": json.dumps({"answer": full_answer})}
 

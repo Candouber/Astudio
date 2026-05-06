@@ -42,8 +42,12 @@ class ContextBuilder:
             raise
 
     @classmethod
-    def build_agent_zero(cls, studio_cards_json: str) -> str:
-        return cls.build("AGENT_ZERO.md", studio_cards_json=studio_cards_json)
+    def build_agent_zero(cls, studio_cards_json: str, language_instruction: str = "") -> str:
+        return cls.build(
+            "AGENT_ZERO.md",
+            studio_cards_json=studio_cards_json,
+            language_instruction=language_instruction,
+        )
 
     @classmethod
     def build_leader_planning(
@@ -58,6 +62,7 @@ class ContextBuilder:
         core_capabilities: str = "",
         task_count: int = 0,
         available_skills: str = "",
+        language_instruction: str = "",
     ) -> str:
         return cls.build(
             "LEADER_PLANNING.md",
@@ -71,6 +76,7 @@ class ContextBuilder:
             core_capabilities=core_capabilities or "(No accumulated capabilities yet.)",
             task_count=task_count,
             available_skills=available_skills or "(No enabled skills are currently available.)",
+            language_instruction=language_instruction,
         )
 
     @classmethod
@@ -81,6 +87,7 @@ class ContextBuilder:
         soul_content: str,
         leader_input: str,
         bundle_skills_block: str = "",
+        language_instruction: str = "",
     ) -> str:
         """
         `bundle_skills_block` is omitted from the prompt when empty.
@@ -97,33 +104,50 @@ class ContextBuilder:
             soul_content=soul_content or "(No historical memory yet.)",
             leader_input=leader_input,
             bundle_skills_block=bundle_skills_block or "",
+            language_instruction=language_instruction,
         )
 
     @classmethod
-    def build_synthesis(cls, user_question: str, sub_agent_findings: str) -> str:
+    def build_synthesis(cls, user_question: str, sub_agent_findings: str, language_instruction: str = "") -> str:
         return cls.build(
             "SYNTHESIS.md",
             user_question=user_question,
-            sub_agent_findings=sub_agent_findings
+            sub_agent_findings=sub_agent_findings,
+            language_instruction=language_instruction,
         )
 
     @classmethod
-    def build_distiller(cls, agent_role: str, step_label: str, input_text: str, output_text: str) -> str:
+    def build_distiller(
+        cls,
+        agent_role: str,
+        step_label: str,
+        input_text: str,
+        output_text: str,
+        language_instruction: str = "",
+    ) -> str:
         return cls.build(
             "DISTILLER.md",
             agent_role=agent_role,
             step_label=step_label,
             input_text=input_text,
-            output_text=output_text
+            output_text=output_text,
+            language_instruction=language_instruction,
         )
 
     @classmethod
-    def build_leader_review(cls, studio_name: str, original_spec: str, deliverable: str) -> str:
+    def build_leader_review(
+        cls,
+        studio_name: str,
+        original_spec: str,
+        deliverable: str,
+        language_instruction: str = "",
+    ) -> str:
         return cls.build(
             "LEADER_REVIEW.md",
             studio_name=studio_name,
             original_spec=original_spec,
             deliverable=deliverable,
+            language_instruction=language_instruction,
         )
 
     @classmethod

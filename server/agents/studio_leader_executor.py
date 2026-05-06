@@ -9,6 +9,7 @@ from services.llm_service import llm_service
 from storage.studio_store import StudioStore
 from storage.task_store import TaskStore
 from tools.registry import describe_available_skills
+from utils.language import is_chinese, response_language_instruction
 
 
 def _format_skills_for_prompt(skills: List[Dict[str, str]]) -> str:
@@ -72,6 +73,7 @@ class StudioLeaderExecutor:
             core_capabilities=core_capabilities_str,
             task_count=studio.card.task_count or 0,
             available_skills=available_skills_str,
+            language_instruction=response_language_instruction(task_goal),
         )
 
         try:
@@ -121,7 +123,7 @@ class StudioLeaderExecutor:
                 "questions": [
                     {
                         "id": "leader_parse_error",
-                        "question": "The Leader planning response could not be parsed as JSON. Please clarify your request or try again later.",
+                        "question": _localized_leader_parse_error(task_goal),
                         "type": "text",
                     }
                 ],
@@ -146,6 +148,7 @@ class StudioLeaderExecutor:
             studio_name=studio_name,
             original_spec=original_spec,
             deliverable=deliverable,
+            language_instruction=response_language_instruction(original_spec or deliverable),
         )
 
         try:
@@ -210,3 +213,9 @@ class StudioLeaderExecutor:
         return "\n".join(findings)
 
 studio_leader = StudioLeaderExecutor()
+
+
+def _localized_leader_parse_error(source_text: str) -> str:
+    if is_chinese(source_text):
+        return "Leader 规划结果无法解析为 JSON。请补充说明你的需求，或稍后重试。"
+    return "The Leader planning response could not be parsed as JSON. Please clarify your request or try again later."

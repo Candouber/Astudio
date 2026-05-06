@@ -15,6 +15,7 @@ from services.llm_service import llm_service
 from storage.sandbox_store import SandboxStore
 from storage.studio_store import StudioStore
 from storage.task_store import TaskStore
+from utils.language import is_chinese
 
 WATCHDOG_INTERVAL_SECONDS = 15
 PLANNING_STALE_SECONDS = 180
@@ -121,7 +122,12 @@ class TaskMonitor:
             await db.close()
 
     async def _mark_task_stale(self, task, inactive_seconds: int):
-        reason = f"任务已连续 {inactive_seconds}s 无新进展，疑似卡死。"
+        chinese = is_chinese(getattr(task, "question", "") or "")
+        reason = (
+            f"任务已连续 {inactive_seconds}s 无新进展，疑似卡死。"
+            if chinese
+            else f"The task has had no progress for {inactive_seconds}s and appears stalled."
+        )
         logger.warning(f"Watchdog: task {task.id} stale, status={task.status}, inactive={inactive_seconds}s")
 
         for node in task.nodes:
@@ -134,10 +140,18 @@ class TaskMonitor:
                     logger.warning(f"Watchdog: mark node stale failed for {node.id}: {e}")
 
         if task.status == "executing" and task.plan_steps:
-            final_reason = reason + " 已自动终止，原方案已保留，可沿用原方案重新执行。"
+            final_reason = (
+                reason + " 已自动终止，原方案已保留，可沿用原方案重新执行。"
+                if chinese
+                else reason + " It was automatically terminated. The original plan was preserved and can be rerun."
+            )
             await self.task_store.set_task_failure(task.id, "terminated", final_reason)
         else:
-            final_reason = reason + " 已自动标记失败，请重新发起或重新规划。"
+            final_reason = (
+                reason + " 已自动标记失败，请重新发起或重新规划。"
+                if chinese
+                else reason + " It was automatically marked as failed. Please start again or replan."
+            )
             await self.task_store.set_task_failure(task.id, "failed", final_reason)
 
     async def _finalize_task(self, task_id: str, question: str, has_blockers: bool):
@@ -182,7 +196,8 @@ class TaskMonitor:
                     extra_instruction=(
                         "The previous final conclusion appears incomplete. Regenerate a complete but concise final summary. "
                         "It must cover final deliverables, main conclusions, and concrete next actions for the user. "
-                        "If artifacts were written to sandbox files, explicitly mention their file paths."
+                        "If artifacts were written to sandbox files, explicitly mention their file paths. "
+                        "Strictly follow the Response Language Policy."
                     ),
                 )
                 if not self._looks_incomplete_summary(retry_result):
@@ -242,6 +257,8 @@ class TaskMonitor:
         if not task:
             return "The task has ended, but final synthesis failed. Check the step directory and output directory for deliverables."
 
+        chinese = is_chinese(getattr(task, "question", "") or "")
+
         current_iteration_id = getattr(task, "current_iteration_id", None)
         sub_tasks = [
             st for st in getattr(task, "sub_tasks", [])
@@ -264,30 +281,49 @@ class TaskMonitor:
             final_text = final_text[:1200].rstrip() + "…"
 
         output_files = await self._list_output_files(task.id)
-        lines = [
-            "# Task Completed",
-            "",
-            "Completeness protection was triggered during final synthesis, so the system generated this result note from verifiable task artifacts.",
-            "",
-            "## Delivery Status",
-            f"- Status: {'partially completed with blockers' if has_blockers else 'completed'}",
-            f"- Accepted steps: {len(accepted)}",
-        ]
+        if chinese:
+            lines = [
+                "# 任务已完成",
+                "",
+                "最终汇总触发了完整性保护，系统已根据可验证的任务产物生成这份结果笔记。",
+                "",
+                "## 交付状态",
+                f"- 状态：{'部分完成，存在阻塞' if has_blockers else '已完成'}",
+                f"- 已验收步骤：{len(accepted)}",
+            ]
+        else:
+            lines = [
+                "# Task Completed",
+                "",
+                "Completeness protection was triggered during final synthesis, so the system generated this result note from verifiable task artifacts.",
+                "",
+                "## Delivery Status",
+                f"- Status: {'partially completed with blockers' if has_blockers else 'completed'}",
+                f"- Accepted steps: {len(accepted)}",
+            ]
         if blocked:
-            lines.append(f"- Blocked steps: {len(blocked)}")
+            lines.append(f"- {'阻塞步骤' if chinese else 'Blocked steps'}: {len(blocked)}")
         if output_files:
-            lines.extend(["", "## Output Files"])
+            lines.extend(["", "## 输出文件" if chinese else "## Output Files"])
             lines.extend(f"- `{path}`" for path in output_files)
         if final_step:
             lines.extend([
                 "",
-                "## Final Deliverable Summary",
-                f"- Source step: {final_step.step_label} / {final_step.assign_to_role}",
+                "## 最终交付摘要" if chinese else "## Final Deliverable Summary",
+                f"- {'来源步骤' if chinese else 'Source step'}: {final_step.step_label} / {final_step.assign_to_role}",
                 "",
-                final_text or "This step completed but did not write a text summary. Check deliverable files in the output directory.",
+                final_text or (
+                    "该步骤已完成，但没有写入文本摘要。请查看输出目录中的交付文件。"
+                    if chinese
+                    else "This step completed but did not write a text summary. Check deliverable files in the output directory."
+                ),
             ])
         else:
-            lines.extend(["", "## Further Reading", "Check deliverables in the step directory and output directory."])
+            lines.extend([
+                "",
+                "## 后续查看" if chinese else "## Further Reading",
+                "请查看步骤目录和输出目录中的交付内容。" if chinese else "Check deliverables in the step directory and output directory.",
+            ])
         return "\n".join(lines).strip()
 
     async def _list_output_files(self, task_id: str) -> list[str]:

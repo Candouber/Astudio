@@ -2,6 +2,7 @@
 from agents.context import ContextBuilder
 from services.llm_service import llm_service
 from storage.task_store import TaskStore
+from utils.language import response_language_instruction
 
 
 class ContextDistiller:
@@ -17,13 +18,14 @@ class ContextDistiller:
             agent_role=agent_role,
             step_label=step_label,
             input_text=input_text,
-            output_text=output_text
+            output_text=output_text,
+            language_instruction=response_language_instruction(input_text or output_text, subject="the distilled summary"),
         )
 
         response_str = await llm_service.chat(
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": "Concise summarize the execution process and conclusions above."}
+                {"role": "user", "content": "Concise summarize the execution process and conclusions above. Follow the Response Language Policy."}
             ],
             role="distillation",
             stream=False,

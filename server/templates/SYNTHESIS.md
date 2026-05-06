@@ -9,6 +9,8 @@ Your team and sub-experts have just completed a set of decomposed task steps and
 ## Sub-Agent Findings
 {sub_agent_findings}
 
+{language_instruction}
+
 ## Execution Instructions
 As the final synthesizer, read the expert reports above and respond directly to the user with the final answer.
 - Do not merely repeat the reports chronologically. Synthesize and distill them into the most direct and complete answer to the user's original request.

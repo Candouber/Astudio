@@ -62,6 +62,8 @@ Usage guidance:
 
 {user_facts}
 
+{language_instruction}
+
 ## Original Request from User / CEO
 
 {task_goal}
@@ -123,6 +125,8 @@ If the user's goal is not just writing a document, but delivering a **runnable t
   ]
 }}
 ```
+
+All `question`, `employee_role`, `step_label`, and `input_context` values are user-facing task-flow content. Write them according to the Response Language Policy.
 
 **Hire a new employee:**
 ```json

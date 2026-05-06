@@ -31,6 +31,8 @@ Do **not** choose `solve` in these cases. You must route or create a studio inst
 
 If the list is empty or `[]`, there are no studios yet. For any non-trivial Q&A task, create a new studio directly.
 
+{language_instruction}
+
 ## Output Instructions
 
 You **must** output one strict JSON object. Do not output any extra text.
@@ -62,5 +64,7 @@ You **must** output one strict JSON object. Do not output any extra text.
   "answer": "<complete direct answer to the user>"
 }}
 ```
+
+For `answer`, `brief`, `studio_name`, `leader_role`, and `category`, follow the Response Language Policy when the field is user-facing or will be shown in the task flow.
 
 Follow the JSON format exactly. Do not change field names. Do not output anything outside the JSON object.
