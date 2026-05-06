@@ -43,6 +43,36 @@ def _truncate_observation(text: str) -> str:
     )
 
 
+def _get_response_field(response: Any, field: str) -> Any:
+    if isinstance(response, dict):
+        return response.get(field)
+    return getattr(response, field, None)
+
+
+def _build_assistant_tool_message(response: Any) -> Dict[str, Any]:
+    tool_calls = _get_response_field(response, "tool_calls") or []
+    message: Dict[str, Any] = {
+        "role": "assistant",
+        "content": _get_response_field(response, "content"),
+        "tool_calls": [
+            {
+                "id": tc.id,
+                "type": "function",
+                "function": {
+                    "name": tc.function.name,
+                    "arguments": tc.function.arguments,
+                },
+            }
+            for tc in tool_calls
+        ],
+    }
+
+    reasoning_content = _get_response_field(response, "reasoning_content")
+    if reasoning_content:
+        message["reasoning_content"] = reasoning_content
+    return message
+
+
 class SubAgentExecutor:
     async def run(
         self,
@@ -165,21 +195,7 @@ class SubAgentExecutor:
                     continue
 
                 no_tool_streak = 0
-                history.append({
-                    "role": "assistant",
-                    "content": getattr(response, "content", None),
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
-                        }
-                        for tc in response.tool_calls
-                    ],
-                })
+                history.append(_build_assistant_tool_message(response))
 
                 protocol_calls: List[Any] = []
                 real_calls: List[Any] = []

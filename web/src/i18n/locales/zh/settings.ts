@@ -13,6 +13,7 @@ const zh: TranslationTree = {
     },
     thinkingType: {
       default: '默认',
+      disabled: '关闭',
       enabled: '开启',
       adaptive: '自适应',
     },

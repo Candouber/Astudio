@@ -256,6 +256,8 @@ class LLMService:
             if role_config.thinking_budget_tokens is not None:
                 thinking["budget_tokens"] = role_config.thinking_budget_tokens
             options["thinking"] = thinking
+        elif thinking_type in {"enabled", "disabled"} and model.startswith("deepseek/"):
+            options["thinking"] = {"type": thinking_type}
         return options
 
     def get_model_display_name(self, model: str) -> str:

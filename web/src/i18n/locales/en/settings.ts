@@ -13,6 +13,7 @@ const en: TranslationTree = {
     },
     thinkingType: {
       default: 'Default',
+      disabled: 'Disabled',
       enabled: 'Enabled',
       adaptive: 'Adaptive',
     },

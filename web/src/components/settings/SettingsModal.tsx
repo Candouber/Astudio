@@ -8,7 +8,7 @@ import { useI18n } from '../../i18n/useI18n'
 import './SettingsModal.css'
 
 const REASONING_EFFORT_VALUES: ReasoningEffort[] = ['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh']
-const THINKING_TYPE_VALUES: ThinkingType[] = ['default', 'enabled', 'adaptive']
+const THINKING_TYPE_VALUES: ThinkingType[] = ['default', 'disabled', 'enabled', 'adaptive']
 
 function getErrorMessage(err: unknown, fallback: string) {
   return err instanceof Error ? err.message : fallback

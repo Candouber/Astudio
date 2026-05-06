@@ -90,7 +90,7 @@ class RoleModelConfig(BaseModel):
     reasoning_effort: Optional[
         Literal["default", "none", "minimal", "low", "medium", "high", "xhigh"]
     ] = None
-    thinking_type: Optional[Literal["default", "enabled", "adaptive"]] = None
+    thinking_type: Optional[Literal["default", "disabled", "enabled", "adaptive"]] = None
     thinking_budget_tokens: Optional[int] = None
 
 

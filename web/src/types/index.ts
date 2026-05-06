@@ -196,7 +196,7 @@ export type ReasoningEffort =
   | 'high'
   | 'xhigh'
 
-export type ThinkingType = 'default' | 'enabled' | 'adaptive'
+export type ThinkingType = 'default' | 'disabled' | 'enabled' | 'adaptive'
 
 export interface RoleModelConfig {
   model: string;
