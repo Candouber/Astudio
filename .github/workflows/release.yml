@@ -86,7 +86,7 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
-      - name: Verify macOS signing and notarization
+      - name: Verify macOS release package
         if: matrix.os == 'macos-latest'
         run: pnpm electron:verify:mac
         env:

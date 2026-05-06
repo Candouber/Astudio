@@ -1,24 +1,26 @@
-import { useEffect } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { Routes, Route } from 'react-router-dom'
 import AppLayout from './components/layout/AppLayout'
-import ChatHome from './pages/ChatHome'
-import TaskBoard from './pages/TaskBoard'
-import TaskDetail from './pages/TaskDetail'
-import Studios from './pages/Studios'
-import StudioDetail from './pages/StudioDetail'
-import AgentDetail from './pages/AgentDetail'
-import Sandboxes from './pages/Sandboxes'
-import SandboxDetail from './pages/SandboxDetail'
-import Schedules from './pages/Schedules'
-import ScheduleResults from './pages/ScheduleResults'
-import SkillPool from './pages/SkillPool'
 import { useConfigStore } from './stores/configStore'
+
+const ChatHome = lazy(() => import('./pages/ChatHome'))
+const TaskBoard = lazy(() => import('./pages/TaskBoard'))
+const TaskDetail = lazy(() => import('./pages/TaskDetail'))
+const Studios = lazy(() => import('./pages/Studios'))
+const StudioDetail = lazy(() => import('./pages/StudioDetail'))
+const AgentDetail = lazy(() => import('./pages/AgentDetail'))
+const Sandboxes = lazy(() => import('./pages/Sandboxes'))
+const SandboxDetail = lazy(() => import('./pages/SandboxDetail'))
+const Schedules = lazy(() => import('./pages/Schedules'))
+const ScheduleResults = lazy(() => import('./pages/ScheduleResults'))
+const SkillPool = lazy(() => import('./pages/SkillPool'))
 
 export default function App() {
   const fetchConfig = useConfigStore(s => s.fetchConfig)
   useEffect(() => { fetchConfig() }, [fetchConfig])
 
   return (
+    <Suspense fallback={null}>
     <Routes>
       <Route element={<AppLayout />}>
         <Route path="/" element={<ChatHome />} />
@@ -34,5 +36,6 @@ export default function App() {
         <Route path="/skills" element={<SkillPool />} />
       </Route>
     </Routes>
+    </Suspense>
   )
 }

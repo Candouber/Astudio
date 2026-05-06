@@ -73,13 +73,16 @@ async def start_task_worker(kind: str, task_id: str, payload: dict[str, Any]) ->
     env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
 
     log_handle = log_path.open("ab")
+    worker_args = [kind, str(payload_path)]
+    if getattr(sys, "frozen", False):
+        worker_args = ["--task-worker", *worker_args]
+    else:
+        worker_args = ["-m", WORKER_MODULE, *worker_args]
+
     try:
         process = await asyncio.create_subprocess_exec(
             sys.executable,
-            "-m",
-            WORKER_MODULE,
-            kind,
-            str(payload_path),
+            *worker_args,
             cwd=str(Path(__file__).resolve().parents[1]),
             env=env,
             stdout=log_handle,

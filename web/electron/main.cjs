@@ -183,6 +183,8 @@ function startBackend() {
         ASTUDIO_USER_DATA_DIR: USER_DATA_DIR,
         ASTUDIO_DATA_DIR: DATA_DIR,
         ASTUDIO_WEB_DIST_DIR: resolveWebDistDir(),
+        ASTUDIO_TASK_EXECUTION: process.env.ASTUDIO_TASK_EXECUTION
+          || (backendCommand.mode === 'sidecar' ? 'inline' : 'process'),
         PYTHONUNBUFFERED: '1',
       },
       stdio: ['ignore', 'pipe', 'pipe'],

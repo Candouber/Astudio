@@ -44,6 +44,8 @@ const result = spawnSync(
     'openai._extras.numpy_proxy',
     '--collect-data',
     'litellm',
+    '--hidden-import',
+    'workers.task_worker',
     '--add-data',
     `templates${dataSeparator}templates`,
     'desktop_entry.py',
