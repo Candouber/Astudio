@@ -1,9 +1,26 @@
 import os
 import sys
+from pathlib import Path
 
 import uvicorn
 
-from main import app
+
+def _resource_path(*parts: str) -> Path:
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return base.joinpath(*parts)
+
+
+def _configure_packaged_resources() -> None:
+    if os.environ.get("TIKTOKEN_CACHE_DIR"):
+        return
+    cache_dir = _resource_path("resources", "tiktoken-cache")
+    if cache_dir.exists():
+        os.environ["TIKTOKEN_CACHE_DIR"] = str(cache_dir)
+
+
+_configure_packaged_resources()
+
+from main import app  # noqa: E402
 
 
 def _run_task_worker() -> int:

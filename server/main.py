@@ -1,3 +1,4 @@
+from functools import lru_cache
 import os
 from pathlib import Path
 
@@ -15,6 +16,17 @@ from storage.sandbox_store import SandboxStore
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 WEB_DIST_DIR = Path(os.environ.get("ASTUDIO_WEB_DIST_DIR") or (ROOT_DIR / "web" / "dist")).expanduser()
+
+
+@lru_cache(maxsize=1)
+def _tokenizer_health() -> dict:
+    try:
+        import tiktoken  # noqa: PLC0415
+
+        tiktoken.get_encoding("cl100k_base")
+        return {"cl100k_base": True}
+    except Exception as e:
+        return {"cl100k_base": False, "error": f"{type(e).__name__}: {e}"}
 
 app = FastAPI(
     title="AStudio",
@@ -63,6 +75,7 @@ async def health_check():
         "version": "0.1.0",
         "active_task_workers": active_worker_count(),
         "db_pool": db_pool_status(),
+        "tokenizer": _tokenizer_health(),
     }
 
 

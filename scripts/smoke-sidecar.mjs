@@ -116,6 +116,9 @@ async function main() {
 
   try {
     const health = await waitForHealth(`http://127.0.0.1:${port}/api/health`, 120000)
+    if (health?.tokenizer?.cl100k_base !== true) {
+      throw new Error(`Sidecar tokenizer check failed: ${JSON.stringify(health?.tokenizer || null)}`)
+    }
     console.log(`Sidecar health check passed: ${JSON.stringify(health)}`)
   } catch (error) {
     console.error(output)
