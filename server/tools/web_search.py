@@ -3,7 +3,6 @@ import html as html_module
 import os
 import re
 import shutil
-import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -11,6 +10,10 @@ from urllib.parse import quote_plus
 
 import httpx
 from loguru import logger
+
+
+_BROWSER_DUMP_TIMEOUT_SECONDS = 60
+_BROWSER_CLI_LOCK = asyncio.Lock()
 
 
 def _strip_tags(text: str) -> str:
@@ -115,8 +118,8 @@ async def _browser_dump_dom(url: str) -> str:
             "--no-default-browser-check",
             "--disable-dev-shm-usage",
             "--disable-background-networking",
-            "--virtual-time-budget=8000",
-            "--timeout=12000",
+            "--virtual-time-budget=45000",
+            "--timeout=60000",
             "--window-size=1280,900",
             f"--user-data-dir={tmp_dir}",
             "--dump-dom",
@@ -125,7 +128,10 @@ async def _browser_dump_dom(url: str) -> str:
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=6)
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=_BROWSER_DUMP_TIMEOUT_SECONDS,
+            )
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
@@ -136,28 +142,6 @@ async def _browser_dump_dom(url: str) -> str:
         return stdout.decode("utf-8", errors="replace")
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
-
-
-async def _open_visible_browser(url: str) -> None:
-    if os.environ.get("WEB_SEARCH_OPEN_BROWSER_ON_FAIL", "1").strip().lower() in {"0", "false", "no"}:
-        raise RuntimeError("WEB_SEARCH_OPEN_BROWSER_ON_FAIL is disabled.")
-
-    if sys.platform == "darwin":
-        cmd = ["open", url]
-    elif sys.platform.startswith("win"):
-        cmd = ["cmd", "/c", "start", "", url]
-    else:
-        opener = shutil.which("xdg-open")
-        if not opener:
-            raise RuntimeError("xdg-open was not found; cannot open a browser.")
-        cmd = [opener, url]
-
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    await asyncio.wait_for(proc.wait(), timeout=5)
 
 
 def _parse_browser_results(query: str, html: str, n: int) -> str:
@@ -193,9 +177,149 @@ def _parse_browser_results(query: str, html: str, n: int) -> str:
     return _fmt(query, items, n)
 
 
+def _fmt_bridge_result(query: str, payload: dict[str, Any], n: int) -> str:
+    items = payload.get("results") or []
+    normalized_items = [
+        {
+            "title": item.get("title", ""),
+            "url": item.get("url", ""),
+            "content": item.get("content", ""),
+        }
+        for item in items
+        if isinstance(item, dict) and item.get("title") and item.get("url")
+    ]
+    if normalized_items:
+        return "[Electron browser search]\n" + _fmt(query, normalized_items, n)
+
+    links = payload.get("links") or []
+    normalized_links = [
+        {
+            "title": item.get("title", ""),
+            "url": item.get("url", ""),
+            "content": "",
+        }
+        for item in links
+        if isinstance(item, dict) and item.get("title") and item.get("url")
+    ]
+
+    body_text = _norm(str(payload.get("text") or ""))
+    if not normalized_links and not body_text:
+        return "[Browser search failed] Electron browser loaded the page, but no readable results were extracted."
+
+    lines = [
+        "[Electron browser raw page]",
+        "Structured search-result parsing did not return results, but Electron extracted page text/links.",
+        f"Query: {query}",
+    ]
+    page_url = payload.get("url") or payload.get("requested_url")
+    if page_url:
+        lines.append(f"Page: {page_url}")
+    if payload.get("title"):
+        lines.append(f"Title: {_norm(str(payload.get('title')))}")
+    if normalized_links:
+        lines.append("\nExtracted links:")
+        for i, item in enumerate(normalized_links[:n], 1):
+            lines.append(f"{i}. {_norm(item['title'])}")
+            lines.append(f"   Source: {item['url']}")
+    if body_text:
+        excerpt = body_text[:5000]
+        if len(body_text) > len(excerpt):
+            excerpt += "\n...[truncated]..."
+        lines.append("\nVisible text excerpt:")
+        lines.append(excerpt)
+    return "\n".join(lines)
+
+
+async def _electron_browser_search(query: str, n: int) -> str:
+    bridge_url = os.environ.get("ASTUDIO_ELECTRON_BROWSER_BRIDGE_URL", "").strip().rstrip("/")
+    token = os.environ.get("ASTUDIO_ELECTRON_BROWSER_BRIDGE_TOKEN", "").strip()
+    if not bridge_url or not token:
+        return "[Browser search failed] Electron browser bridge is not available."
+
+    try:
+        async with _make_httpx_client(None, timeout=70.0) as c:
+            response = await c.post(
+                f"{bridge_url}/browser/search",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"query": query, "max_results": n},
+            )
+            response.raise_for_status()
+            payload = response.json()
+        if not payload.get("ok"):
+            return f"[Browser search failed] Electron browser bridge error: {payload.get('error') or 'unknown error'}"
+        return _fmt_bridge_result(query, payload, n)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        return f"[Browser search failed] Electron browser bridge failed: {type(e).__name__}: {e}"
+
+
+def _extract_raw_browser_page(query: str, url: str, html: str, n: int) -> str:
+    try:
+        from lxml import html as lxml_html  # noqa: PLC0415
+    except ImportError as e:
+        return f"[Browser search failed] Missing dependency: {e}"
+
+    try:
+        tree = lxml_html.fromstring(html)
+    except Exception as e:
+        return f"[Browser search failed] Unable to parse browser HTML: {type(e).__name__}: {e}"
+
+    for bad in tree.xpath("//script|//style|//noscript|//svg"):
+        parent = bad.getparent()
+        if parent is not None:
+            parent.remove(bad)
+
+    title = _norm(" ".join(tree.xpath("//title//text()")))
+    links: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for link in tree.xpath("//a[@href]"):
+        href = (link.get("href") or "").strip()
+        if not href.startswith("http") or href in seen:
+            continue
+        text = _norm(" ".join(link.xpath(".//text()")))
+        if not text or len(text) < 2:
+            continue
+        seen.add(href)
+        links.append((text[:140], href))
+        if len(links) >= max(n, 8):
+            break
+
+    body_text = _norm(" ".join(tree.xpath("//body//text()")))
+    if not links and not body_text:
+        return f"[Browser search failed] Browser loaded {url}, but no readable text or links were extracted."
+
+    lines = [
+        "[Browser search raw page]",
+        "Structured search-result parsing failed, but the browser loaded the page below.",
+        f"Query: {query}",
+        f"Page: {url}",
+    ]
+    if title:
+        lines.append(f"Title: {title}")
+    if links:
+        lines.append("\nExtracted links:")
+        for i, (text, href) in enumerate(links[:n], 1):
+            lines.append(f"{i}. {text}")
+            lines.append(f"   Source: {href}")
+    if body_text:
+        excerpt = body_text[:5000]
+        if len(body_text) > len(excerpt):
+            excerpt += "\n...[truncated]..."
+        lines.append("\nVisible text excerpt:")
+        lines.append(excerpt)
+    return "\n".join(lines)
+
+
 async def _browser_search(query: str, n: int) -> str:
     if os.environ.get("WEB_SEARCH_BROWSER_FALLBACK", "1").strip().lower() in {"0", "false", "no"}:
         return "[Browser search failed] WEB_SEARCH_BROWSER_FALLBACK is disabled."
+
+    bridge_result = await _electron_browser_search(query, n)
+    if not _is_search_failure(bridge_result):
+        logger.info("web_search electron browser bridge succeeded")
+        return bridge_result
+    last_error = bridge_result
 
     try:
         from tools.browser_search import browser_search  # noqa: PLC0415
@@ -213,34 +337,32 @@ async def _browser_search(query: str, n: int) -> str:
     if os.environ.get("WEB_SEARCH_BROWSER_CLI_FALLBACK", "1").strip().lower() in {"0", "false", "no"}:
         return last_error
 
-    search_urls = [f"https://www.bing.com/search?q={quote_plus(query)}"]
+    search_urls = [f"https://www.bing.com/search?q={quote_plus(query)}&cc=US&setlang=en&ensearch=1"]
     if os.environ.get("WEB_SEARCH_BROWSER_EXTRA_ENGINES", "").strip().lower() in {"1", "true", "yes"}:
         search_urls.append(f"https://www.google.com/search?q={quote_plus(query)}&hl=zh-CN")
     for url in search_urls:
         try:
-            html = await _browser_dump_dom(url)
+            async with _BROWSER_CLI_LOCK:
+                html = await _browser_dump_dom(url)
             result = _parse_browser_results(query, html, n)
             if not _is_search_failure(result):
                 logger.info(f"browser web_search fallback succeeded via {url}")
                 return "[Browser search fallback]\n" + result
-            last_error = result
+            raw_result = _extract_raw_browser_page(query, url, html, n)
+            if not _is_search_failure(raw_result):
+                logger.info(f"browser web_search fallback returned raw page via {url}")
+                return raw_result
+            last_error = raw_result
         except asyncio.CancelledError:
             raise
         except Exception as e:
             last_error = f"{type(e).__name__}: {e}"
             logger.warning(f"browser web_search fallback failed via {url}: {last_error}")
 
-    try:
-        await _open_visible_browser(search_urls[0])
-        return (
-            "[Browser search opened]\n"
-            f"Regular search and headless browser parsing both failed. Opened the search page in the local default browser: {search_urls[0]}\n"
-            f"Original error: {last_error or 'No parseable results found'}"
-        )
-    except asyncio.CancelledError:
-        raise
-    except Exception as e:
-        return f"[Browser search failed] {last_error or 'No parseable results found'}; opening a visible browser also failed: {type(e).__name__}: {e}"
+    return (
+        "[Browser search failed] Regular search and headless browser extraction both failed. "
+        f"No visible browser was opened. Last error: {last_error or 'No parseable results found'}"
+    )
 
 
 # ── DuckDuckGo：primp.AsyncClient（Rust 原生 async，浏览器指纹，可正确取消）──────

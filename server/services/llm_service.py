@@ -296,6 +296,7 @@ class LLMService:
         response_format: Any = None,
         temperature: Optional[float] = None,
         tools: Any = None,
+        tool_choice: Any = None,
         reasoning_effort: Optional[str] = None,
         thinking: Optional[Dict[str, Any]] = None,
     ) -> Union[str, AsyncGenerator[str, None]]:
@@ -354,6 +355,8 @@ class LLMService:
 
         if tools:
             kwargs["tools"] = tools
+        if tool_choice:
+            kwargs["tool_choice"] = tool_choice
 
         response = await self._call_litellm(**kwargs)
 
@@ -381,6 +384,7 @@ class LLMService:
         response_format: Any = None,
         temperature: Optional[float] = None,
         tools: Any = None,
+        tool_choice: Any = None,
         reasoning_effort: Optional[str] = None,
         thinking: Optional[Dict[str, Any]] = None,
     ) -> tuple:
@@ -434,6 +438,8 @@ class LLMService:
             kwargs["response_format"] = response_format
         if tools:
             kwargs["tools"] = tools
+        if tool_choice:
+            kwargs["tool_choice"] = tool_choice
 
         response = await self._call_litellm(**kwargs)
         total_tokens = 0

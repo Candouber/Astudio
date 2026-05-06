@@ -1,6 +1,8 @@
 const { app, BrowserWindow, dialog } = require('electron')
 const { spawn } = require('node:child_process')
+const crypto = require('node:crypto')
 const fs = require('node:fs')
+const http = require('node:http')
 const net = require('node:net')
 const path = require('node:path')
 
@@ -25,6 +27,10 @@ let win = null
 let backend = null
 let startedBackend = false
 let backendStartError = null
+let browserBridge = null
+let browserBridgeUrl = ''
+const browserBridgeToken = crypto.randomUUID()
+let browserBridgeQueue = Promise.resolve()
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -46,6 +52,168 @@ function findFreePort() {
       server.close(() => resolve(address.port))
     })
   })
+}
+
+function readRequestBody(req, maxBytes = 64 * 1024) {
+  return new Promise((resolve, reject) => {
+    let body = ''
+    req.setEncoding('utf8')
+    req.on('data', (chunk) => {
+      body += chunk
+      if (body.length > maxBytes) {
+        reject(new Error('Request body is too large'))
+        req.destroy()
+      }
+    })
+    req.on('end', () => resolve(body))
+    req.on('error', reject)
+  })
+}
+
+function sendJson(res, statusCode, payload) {
+  const data = JSON.stringify(payload)
+  res.writeHead(statusCode, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': Buffer.byteLength(data),
+  })
+  res.end(data)
+}
+
+function withTimeout(promise, timeoutMs, label) {
+  let timer = null
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs)
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+}
+
+async function runBrowserExtraction({ query, maxResults }) {
+  const n = Math.min(Math.max(Number(maxResults || 5), 1), 10)
+  const url = `https://www.bing.com/search?q=${encodeURIComponent(query)}&cc=US&setlang=en&ensearch=1`
+  const hidden = new BrowserWindow({
+    show: false,
+    width: 1280,
+    height: 900,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      images: false,
+    },
+  })
+
+  try {
+    hidden.webContents.setUserAgent(
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
+    )
+    await withTimeout(hidden.loadURL(url), 60_000, 'Electron browser load')
+    const payload = await withTimeout(
+      hidden.webContents.executeJavaScript(`
+        (() => {
+          const norm = (text) => String(text || '').replace(/\\s+/g, ' ').trim()
+          const decodeBingUrl = (href) => {
+            try {
+              const url = new URL(href)
+              if (!url.hostname.includes('bing.com') || !url.pathname.startsWith('/ck/')) return href
+              const raw = url.searchParams.get('u') || ''
+              if (!raw.startsWith('a1')) return href
+              let encoded = raw.slice(2)
+              encoded += '='.repeat((4 - encoded.length % 4) % 4)
+              return decodeURIComponent(escape(atob(encoded.replace(/-/g, '+').replace(/_/g, '/'))))
+            } catch (_) {
+              return href
+            }
+          }
+          const results = []
+          const seen = new Set()
+          document.querySelectorAll('li.b_algo').forEach((item) => {
+            const anchor = item.querySelector('h2 a')
+            if (!anchor) return
+            const title = norm(anchor.textContent)
+            const href = decodeBingUrl(anchor.href || '')
+            const snippet = norm((item.querySelector('p') || {}).textContent)
+            if (!title || !href || seen.has(href)) return
+            seen.add(href)
+            results.push({ title, url: href, content: snippet })
+          })
+          const links = []
+          document.querySelectorAll('a[href]').forEach((anchor) => {
+            const href = anchor.href || ''
+            const text = norm(anchor.textContent)
+            if (!href.startsWith('http') || !text || seen.has(href)) return
+            seen.add(href)
+            links.push({ title: text.slice(0, 140), url: href })
+          })
+          return {
+            title: norm(document.title),
+            url: location.href,
+            results,
+            links,
+            text: norm(document.body ? document.body.innerText : '').slice(0, 8000),
+          }
+        })()
+      `),
+      10_000,
+      'Electron browser extraction',
+    )
+    return { ok: true, query, requested_url: url, max_results: n, ...payload }
+  } finally {
+    if (!hidden.isDestroyed()) hidden.destroy()
+  }
+}
+
+function enqueueBrowserExtraction(payload) {
+  const job = browserBridgeQueue.then(() => runBrowserExtraction(payload))
+  browserBridgeQueue = job.catch(() => {})
+  return job
+}
+
+async function startBrowserBridge() {
+  if (browserBridgeUrl) return browserBridgeUrl
+  const port = await findFreePort()
+  browserBridgeUrl = `http://${SERVER_HOST}:${port}`
+  browserBridge = http.createServer(async (req, res) => {
+    if (req.method === 'GET' && req.url === '/health') {
+      sendJson(res, 200, { status: 'ok' })
+      return
+    }
+    if (req.method !== 'POST' || req.url !== '/browser/search') {
+      sendJson(res, 404, { ok: false, error: 'Not found' })
+      return
+    }
+    const auth = req.headers.authorization || ''
+    if (auth !== `Bearer ${browserBridgeToken}`) {
+      sendJson(res, 401, { ok: false, error: 'Unauthorized' })
+      return
+    }
+    try {
+      const body = await readRequestBody(req)
+      const payload = JSON.parse(body || '{}')
+      const query = String(payload.query || '').trim()
+      if (!query) {
+        sendJson(res, 400, { ok: false, error: 'Missing query' })
+        return
+      }
+      const result = await enqueueBrowserExtraction({
+        query,
+        maxResults: payload.max_results,
+      })
+      sendJson(res, 200, result)
+    } catch (error) {
+      sendJson(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  })
+  await new Promise((resolve, reject) => {
+    browserBridge.once('error', reject)
+    browserBridge.listen(port, SERVER_HOST, () => {
+      browserBridge.off('error', reject)
+      resolve()
+    })
+  })
+  return browserBridgeUrl
 }
 
 function resolveAppIconPath() {
@@ -183,6 +351,8 @@ function startBackend() {
         ASTUDIO_USER_DATA_DIR: USER_DATA_DIR,
         ASTUDIO_DATA_DIR: DATA_DIR,
         ASTUDIO_WEB_DIST_DIR: resolveWebDistDir(),
+        ASTUDIO_ELECTRON_BROWSER_BRIDGE_URL: browserBridgeUrl,
+        ASTUDIO_ELECTRON_BROWSER_BRIDGE_TOKEN: browserBridgeToken,
         ASTUDIO_TASK_EXECUTION: process.env.ASTUDIO_TASK_EXECUTION
           || (backendCommand.mode === 'sidecar' ? 'inline' : 'process'),
         PYTHONUNBUFFERED: '1',
@@ -226,6 +396,7 @@ async function ensureBackend() {
       `${SERVER_URL} already has an AStudio backend running, but it is not serving the frontend. Stop the old backend and start Electron again.`,
     )
   }
+  await startBrowserBridge()
   startBackend()
   if (!(await waitForHealth())) {
     if (backendStartError) {
@@ -277,6 +448,13 @@ function stopBackend() {
   backend.kill(process.platform === 'win32' ? undefined : 'SIGTERM')
 }
 
+function stopBrowserBridge() {
+  if (!browserBridge) return
+  browserBridge.close()
+  browserBridge = null
+  browserBridgeUrl = ''
+}
+
 app.whenReady().then(() => {
   if (process.platform === 'darwin' && APP_ICON_PATH && app.dock) {
     app.dock.setIcon(APP_ICON_PATH)
@@ -287,7 +465,10 @@ app.whenReady().then(() => {
   app.quit()
 })
 
-app.on('before-quit', stopBackend)
+app.on('before-quit', () => {
+  stopBackend()
+  stopBrowserBridge()
+})
 
 app.on('window-all-closed', () => {
   win = null

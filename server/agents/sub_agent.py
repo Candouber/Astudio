@@ -14,6 +14,17 @@ from tools.registry import build_tool_schemas
 MAX_REACT_STEPS = 20
 _TOOL_RESULT_MAX_CHARS = 12_000
 _MAX_NO_TOOL_STREAK = 2
+_MAX_CONSECUTIVE_TOOL_FAILURES = 2
+_FAILURE_PREFIXES = (
+    "[Search failed]",
+    "[Browser search failed]",
+    "[Tool execution error]",
+    "[Tool execution failed]",
+    "[Argument error]",
+    "[Error]",
+    "[Safety blocked]",
+    "No relevant results found",
+)
 _TASK_SANDBOX_HELPERS = [
     "ensure_sandbox",
     "sandbox_list_files",
@@ -45,8 +56,20 @@ def _truncate_observation(text: str) -> str:
 
 def _get_response_field(response: Any, field: str) -> Any:
     if isinstance(response, dict):
-        return response.get(field)
-    return getattr(response, field, None)
+        value = response.get(field)
+    else:
+        value = getattr(response, field, None)
+    if value is not None:
+        return value
+
+    for extra_field in ("provider_specific_fields", "additional_kwargs", "model_extra"):
+        if isinstance(response, dict):
+            extra = response.get(extra_field)
+        else:
+            extra = getattr(response, extra_field, None)
+        if isinstance(extra, dict) and extra.get(field) is not None:
+            return extra.get(field)
+    return None
 
 
 def _build_assistant_tool_message(response: Any) -> Dict[str, Any]:
@@ -71,6 +94,40 @@ def _build_assistant_tool_message(response: Any) -> Dict[str, Any]:
     if reasoning_content:
         message["reasoning_content"] = reasoning_content
     return message
+
+
+def _tool_name_from_schema(schema: Dict[str, Any]) -> str:
+    return str((schema.get("function") or {}).get("name") or "")
+
+
+def _protocol_tool_schemas(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [
+        schema for schema in tools
+        if _tool_name_from_schema(schema) in {"submit_task_deliverable", "report_system_blocker"}
+    ]
+
+
+def _is_failed_tool_result(text: str) -> bool:
+    value = (text or "").strip()
+    if not value:
+        return True
+    return value.startswith(_FAILURE_PREFIXES) or "TimeoutError" in value
+
+
+def _structured_observation(tool_name: str, result: str) -> tuple[str, bool]:
+    failed = _is_failed_tool_result(result)
+    payload = {
+        "tool": tool_name,
+        "ok": not failed,
+        "status": "failed" if failed else "ok",
+        "result": _truncate_observation(result),
+    }
+    if failed:
+        payload["instruction"] = (
+            "Do not repeat the same failing tool path. Use another available source, "
+            "submit a best-effort deliverable, or report a blocker."
+        )
+    return json.dumps(payload, ensure_ascii=False), failed
 
 
 class SubAgentExecutor:
@@ -135,6 +192,10 @@ class SubAgentExecutor:
 
             total_tokens = 0
             no_tool_streak = 0
+            consecutive_tool_failures = 0
+            force_finalization = False
+            finalization_reason = ""
+            protocol_tools = _protocol_tool_schemas(tools)
 
             async def _emit(msg: str) -> None:
                 if progress_callback is None:
@@ -146,7 +207,17 @@ class SubAgentExecutor:
 
             for step in range(MAX_REACT_STEPS):
                 logger.debug(f"[{agent_role}] ReAct step {step + 1}/{MAX_REACT_STEPS}")
-                await _emit(f"[Step {step + 1}/{MAX_REACT_STEPS}] Thinking...")
+                current_tools = protocol_tools if force_finalization else tools
+                tool_choice = "required" if force_finalization else None
+                if force_finalization:
+                    await _emit("Finalizing result...")
+                    if not history or history[-1].get("content") != finalization_reason:
+                        history.append({
+                            "role": "user",
+                            "content": finalization_reason,
+                        })
+                else:
+                    await _emit(f"Thinking... (step {step + 1})")
 
                 try:
                     response, step_tokens = await llm_service.chat_with_usage(
@@ -154,7 +225,8 @@ class SubAgentExecutor:
                         role="sub_agent",
                         stream=False,
                         temperature=0.1,
-                        tools=tools,
+                        tools=current_tools,
+                        tool_choice=tool_choice,
                     )
                     total_tokens += step_tokens
                 except Exception as llm_err:
@@ -170,6 +242,18 @@ class SubAgentExecutor:
 
                 if not (hasattr(response, "tool_calls") and response.tool_calls):
                     plain_text = getattr(response, "content", None) or str(response) or ""
+                    if plain_text.strip():
+                        logger.info(
+                            f"[{agent_role}] Step {step+1}: no tool call; accepting plain text "
+                            f"as deliverable, len={len(plain_text)}, tokens={total_tokens}"
+                        )
+                        await _emit("Submitting deliverable...")
+                        return {
+                            "status": "completed",
+                            "deliverable": plain_text.strip(),
+                            "tokens": total_tokens,
+                        }
+
                     no_tool_streak += 1
                     logger.warning(
                         f"[{agent_role}] Step {step+1}: 无工具调用 "
@@ -207,7 +291,7 @@ class SubAgentExecutor:
 
                 if real_calls:
                     tool_summary = ", ".join(tc.function.name for tc in real_calls)
-                    await _emit(f"[Step {step + 1}/{MAX_REACT_STEPS}] Calling tools: {tool_summary}...")
+                    await _emit(f"Calling tools: {tool_summary}...")
 
                     async def _exec(tc):
                         tool_name = tc.function.name
@@ -220,16 +304,36 @@ class SubAgentExecutor:
                             result = await execute_tool(tool_name, args)
                         except Exception as e:
                             result = f"[Tool execution error] {type(e).__name__}: {e}"
-                        return tc, _truncate_observation(str(result))
+                        observation, failed = _structured_observation(tool_name, str(result))
+                        return tc, observation, failed
 
                     tool_results = await asyncio.gather(*[_exec(tc) for tc in real_calls])
-                    await _emit(f"[Step {step + 1}/{MAX_REACT_STEPS}] Processing results from {tool_summary}...")
-                    for tc, observation in tool_results:
+                    await _emit(f"Processing results from {tool_summary}...")
+                    failed_count = 0
+                    for tc, observation, failed in tool_results:
+                        if failed:
+                            failed_count += 1
                         history.append({
                             "role": "tool",
                             "tool_call_id": tc.id,
                             "content": observation,
                         })
+                    if failed_count:
+                        consecutive_tool_failures += failed_count
+                    else:
+                        consecutive_tool_failures = 0
+                    if consecutive_tool_failures >= _MAX_CONSECUTIVE_TOOL_FAILURES:
+                        force_finalization = True
+                        finalization_reason = (
+                            "The controller detected repeated tool failures in this sub-task. "
+                            "Stop calling information-gathering tools now. Choose exactly one protocol tool:\n"
+                            "- `submit_task_deliverable` if you can provide a useful best-effort result from the available context, clearly marking unverified parts.\n"
+                            "- `report_system_blocker` if the missing tool results make the task impossible to complete safely.\n"
+                        )
+                        logger.warning(
+                            f"[{agent_role}] 连续工具失败 {consecutive_tool_failures} 次，进入强制收口"
+                        )
+                        continue
 
                 if protocol_calls:
                     if real_calls:
