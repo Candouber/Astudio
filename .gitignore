@@ -65,6 +65,8 @@ dist/
 !/build/icon.png
 !/build/icon.icns
 !/build/icon.ico
+!/build/entitlements.mac.plist
+!/build/entitlements.mac.inherit.plist
 !/build/server-bin/
 build/server-bin/*
 !/build/server-bin/.gitkeep

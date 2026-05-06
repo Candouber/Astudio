@@ -57,7 +57,43 @@ jobs:
       - name: Smoke test backend sidecar
         run: pnpm server:smoke:sidecar
 
+      - name: Validate macOS signing secrets
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          missing=0
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name is required for signed macOS releases"
+              missing=1
+            fi
+          done
+          exit "$missing"
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Build Electron package (macOS signed and notarized)
+        if: matrix.os == 'macos-latest'
+        run: node scripts/pack-electron-sidecar.mjs --skip-build --skip-sidecar
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Verify macOS signing and notarization
+        if: matrix.os == 'macos-latest'
+        run: pnpm electron:verify:mac
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
       - name: Build Electron package
+        if: matrix.os != 'macos-latest'
         run: node scripts/pack-electron-sidecar.mjs --skip-build --skip-sidecar
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"

@@ -14,6 +14,7 @@
     "build:web": "cd web && pnpm run build",
     "server:build:sidecar": "node scripts/build-server-sidecar.mjs",
     "server:smoke:sidecar": "node scripts/smoke-sidecar.mjs",
+    "electron:verify:mac": "node scripts/verify-macos-release.mjs",
     "start": "pnpm build:web && cd server && uv run uvicorn main:app --host 127.0.0.1 --port 8000",
     "electron:dev": "npm-run-all --parallel dev:web electron:dev:app",
     "electron:dev:app": "cd web && ELECTRON_RENDERER_URL=http://127.0.0.1:5173 pnpm run electron",

@@ -11,28 +11,11 @@ files:
   - build/icon.png
   - build/icon.icns
   - build/icon.ico
-  - web/dist/**
   - web/electron/**
   - "!**/*.map"
   - "!**/.DS_Store"
 
 extraResources:
-  - from: server
-    to: server
-    filter:
-      - "**/*"
-      - "!data/**"
-      - "!logs/**"
-      - "!build/**"
-      - "!dist/**"
-      - "!.venv/**"
-      - "!venv/**"
-      - "!__pycache__/**"
-      - "!**/__pycache__/**"
-      - "!*.spec"
-      - "!*.db"
-      - "!*.db-wal"
-      - "!*.db-shm"
   - from: build/server-bin
     to: server-bin
     filter:
@@ -50,7 +33,15 @@ asar: true
 mac:
   icon: build/icon.icns
   category: public.app-category.productivity
-  identity: null
+  type: distribution
+  identity: Developer ID Application
+  hardenedRuntime: true
+  forceCodeSigning: true
+  notarize: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+  binaries:
+    - Contents/Resources/server-bin/astudio-server
   target:
     - target: dmg
       arch:
