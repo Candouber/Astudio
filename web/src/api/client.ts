@@ -19,6 +19,7 @@ import type {
   SkillProbeResult,
   SkillMdPayload,
   TaskAttachment,
+  ModelCapabilities,
 } from '../types'
 
 const httpClient = axios.create({
@@ -46,7 +47,15 @@ export const api = {
     litellm_provider?: string | null;
     model_aliases?: Record<string, string>;
   }) =>
-    httpClient.post<{success: boolean; message: string; reply?: string}>('/config/test', payload).then(res => res.data),
+    httpClient.post<{
+      success: boolean;
+      message: string;
+      reply?: string;
+      model?: string;
+      capabilities?: ModelCapabilities;
+    }>('/config/test', payload).then(res => res.data),
+  getModelCapabilities: (model: string) =>
+    httpClient.post<ModelCapabilities>('/config/model-capabilities', { model }).then(res => res.data),
 
   // OAuth
   initiateOAuth: (providerName: string) =>

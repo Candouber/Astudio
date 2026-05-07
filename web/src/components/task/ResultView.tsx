@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import type { PathNode, PathEdge, TaskStatus, Annotation, SubTask, Sandbox, SandboxFile } from '../../types'
+import type { PathNode, PathEdge, TaskStatus, Annotation, SubTask, Sandbox, SandboxFile, TaskIteration } from '../../types'
 import { api } from '../../api/client'
 import { connectTaskStream } from '../../api/sse'
 import { useTaskStore } from '../../stores/taskStore'
@@ -71,6 +71,16 @@ interface SelectionPayload {
   selectedText: string
   nodeId: string
   anchorRect: DOMRect
+}
+
+interface ResultIterationTab {
+  id: string
+  iteration: TaskIteration | null
+  label: string
+  title: string
+  rootNode?: PathNode
+  agentNodes: PathNode[]
+  subTasks: SubTask[]
 }
 
 function outputNodeId(path: string) {
@@ -313,13 +323,73 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
   const navigate = useNavigate()
   const edges = useTaskStore(s => s.edges)
   const currentTask = useTaskStore(s => s.currentTask)
-  const subTasks = useMemo(() => currentTask?.sub_tasks ?? [], [currentTask?.sub_tasks])
+  const allSubTasks = useMemo(() => currentTask?.sub_tasks ?? [], [currentTask?.sub_tasks])
+  const iterations = useMemo(() => currentTask?.iterations ?? [], [currentTask?.iterations])
   const currentIterationId = currentTask?.current_iteration_id
-  const rootNode =
-    [...nodes].reverse().find(n => n.type === 'agent_zero' && n.iteration_id === currentIterationId)
-    || [...nodes].reverse().find(n => n.type === 'agent_zero')
+  const [activeResultIterationId, setActiveResultIterationId] = useState('')
+  const resultTabs = useMemo<ResultIterationTab[]>(() => {
+    const knownIterationIds = new Set(iterations.map(iteration => iteration.id))
+    const makeTab = (iteration: TaskIteration, index: number): ResultIterationTab | null => {
+      const iterNodes = nodes.filter(node => node.iteration_id === iteration.id)
+      const root = [...iterNodes].reverse().find(node =>
+        node.type === 'agent_zero' && node.status === 'completed' && Boolean((node.output || '').trim()),
+      )
+      const iterAgentNodes = iterNodes.filter(node =>
+        node.type === 'sub_agent' && (node.status === 'completed' || Boolean((node.output || '').trim())),
+      )
+      const iterSubTasks = allSubTasks.filter(subTask => subTask.iteration_id === iteration.id)
+      if (!root && !iterAgentNodes.some(node => Boolean((node.output || '').trim()))) return null
+      return {
+        id: iteration.id,
+        iteration,
+        label: t('resultView.iterationResultTab', { n: index + 1 }),
+        title: iteration.title || iteration.instruction || t('resultView.iterationResultTab', { n: index + 1 }),
+        rootNode: root,
+        agentNodes: iterAgentNodes,
+        subTasks: iterSubTasks,
+      }
+    }
+
+    const tabs = iterations
+      .map((iteration, index) => makeTab(iteration, index))
+      .filter((tab): tab is ResultIterationTab => Boolean(tab))
+
+    const legacyNodes = nodes.filter(node => !node.iteration_id || !knownIterationIds.has(node.iteration_id))
+    const legacyRoot = [...legacyNodes].reverse().find(node =>
+      node.type === 'agent_zero' && node.status === 'completed' && Boolean((node.output || '').trim()),
+    )
+    const legacyAgentNodes = legacyNodes.filter(node =>
+      node.type === 'sub_agent' && (node.status === 'completed' || Boolean((node.output || '').trim())),
+    )
+    if ((legacyRoot || legacyAgentNodes.length > 0) && tabs.length === 0) {
+      tabs.push({
+        id: '__legacy__',
+        iteration: null,
+        label: t('resultView.legacyResultTab'),
+        title: t('resultView.legacyResultTab'),
+        rootNode: legacyRoot,
+        agentNodes: legacyAgentNodes,
+        subTasks: allSubTasks.filter(subTask => !subTask.iteration_id || !knownIterationIds.has(subTask.iteration_id)),
+      })
+    }
+    return tabs
+  }, [allSubTasks, iterations, nodes, t])
+
+  useEffect(() => {
+    if (resultTabs.length === 0) {
+      if (activeResultIterationId) setActiveResultIterationId('')
+      return
+    }
+    if (resultTabs.some(tab => tab.id === activeResultIterationId)) return
+    const currentTab = currentIterationId ? resultTabs.find(tab => tab.id === currentIterationId) : undefined
+    setActiveResultIterationId((currentTab ?? resultTabs[resultTabs.length - 1]).id)
+  }, [activeResultIterationId, currentIterationId, resultTabs])
+
+  const activeResultTab = resultTabs.find(tab => tab.id === activeResultIterationId) ?? resultTabs[resultTabs.length - 1]
+  const rootNode = activeResultTab?.rootNode
   const synthesis = rootNode?.output || ''
-  const agentNodes = useMemo(() => nodes.filter(n => n.type === 'sub_agent'), [nodes])
+  const agentNodes = useMemo(() => activeResultTab?.agentNodes ?? [], [activeResultTab])
+  const subTasks = useMemo(() => activeResultTab?.subTasks ?? [], [activeResultTab])
   const graph = useMemo(() => buildGraphIndex(agentNodes, edges), [agentNodes, edges])
   const sections = useMemo(
     () => parseSynthesisSections(synthesis, t('resultView.defaultSectionTitle')),
@@ -354,9 +424,21 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
     }
   }, [subTasks])
 
-  const hasBlockers = status === 'completed_with_blockers'
+  const hasBlockedSteps = subTasks.some(subTask => subTask.status === 'blocked')
+    || agentNodes.some(node => node.status === 'error')
+  const hasBlockers = status === 'completed_with_blockers' || hasBlockedSteps
   const isTimeout = status === 'timeout_killed'
   const isFailed = status === 'failed'
+  const isTerminated = status === 'terminated'
+  const resultState = isFailed
+    ? 'failed'
+    : isTimeout
+      ? 'timeout'
+      : isTerminated
+        ? 'terminated'
+        : hasBlockers
+          ? 'partial'
+          : 'done'
 
   const createdSkillSlugs = useMemo(() => {
     const patterns = [
@@ -371,10 +453,10 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
         while ((match = re.exec(text)) !== null) set.add(match[1])
       }
     }
-    for (const node of nodes) scan(node.output)
+    for (const node of [rootNode, ...agentNodes]) scan(node?.output)
     scan(synthesis)
     return Array.from(set)
-  }, [nodes, synthesis])
+  }, [agentNodes, rootNode, synthesis])
 
   const stepNotes = useMemo(() => (
     graph.orderedNodes.map(node => ({
@@ -406,6 +488,7 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
   const [outputEditDraft, setOutputEditDraft] = useState('')
   const [outputSaving, setOutputSaving] = useState(false)
   const [outputEditError, setOutputEditError] = useState('')
+  const mainScrollRef = useRef<HTMLDivElement>(null)
   const updateTaskStatus = useTaskStore(s => s.updateTaskStatus)
   const setExecuting = useTaskStore(s => s.setExecuting)
 
@@ -548,6 +631,20 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
     handleJumpToAnnotation(annotation)
   }, [handleJumpToAnnotation, selectedPanelAnnotationId])
 
+  const handleJumpToSection = useCallback((sectionId: string) => {
+    const container = mainScrollRef.current
+    const target = document.getElementById(sectionId)
+    if (!target) return
+    if (!container) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      return
+    }
+    const containerRect = container.getBoundingClientRect()
+    const targetRect = target.getBoundingClientRect()
+    const top = targetRect.top - containerRect.top + container.scrollTop - 16
+    container.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
+  }, [])
+
   const handleToggleStep = useCallback((nodeId: string, anchorEl: HTMLElement | null) => {
     const scrollContainer = document.getElementById('result-content-area')
     if (!scrollContainer || !anchorEl) {
@@ -671,28 +768,34 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
 
   return (
     <div className="result-layout">
-      <div className="result-layout__main" id="result-content-area">
+      <div className="result-layout__main" id="result-content-area" ref={mainScrollRef}>
         <div className={`result-view ${panelOpen ? 'result-view--with-panel' : ''}`}>
           <div className="result-view__header card">
             <div className="result-view__title-row">
-              {hasBlockers || isTimeout || isFailed ? (
-                <AlertTriangle size={22} className="result-view__icon result-view__icon--warn" />
-              ) : (
+              {resultState === 'done' ? (
                 <CheckCircle size={22} className="result-view__icon result-view__icon--ok" />
+              ) : (
+                <AlertTriangle size={22} className="result-view__icon result-view__icon--warn" />
               )}
               <div className="result-view__title-copy">
                 <h2>
-                  {isFailed
+                  {resultState === 'failed'
                     ? t('resultView.titleFailed')
-                    : isTimeout
+                    : resultState === 'timeout'
                       ? t('resultView.titleTimeout')
-                      : hasBlockers
+                      : resultState === 'terminated'
+                        ? t('resultView.titleTerminated')
+                        : resultState === 'partial'
                         ? t('resultView.titlePartial')
                         : t('resultView.titleDone')}
                 </h2>
                 <p className="result-view__question">{question}</p>
                 <p className="result-view__summary">
-                  {t('resultView.summaryLine')}
+                  {resultState === 'terminated'
+                    ? t('resultView.summaryTerminated')
+                    : resultState === 'partial'
+                      ? t('resultView.summaryPartial')
+                      : t('resultView.summaryLine')}
                 </p>
               </div>
               <button
@@ -742,18 +845,22 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
             )}
           </div>
 
-          {isFailed && statusMessage && (
+          {(isFailed || isTerminated) && statusMessage && (
             <div className="result-view__warning card">
               <AlertTriangle size={16} />
               <span>{translateStatusMessage(locale, statusMessage)}</span>
             </div>
           )}
 
-          {(hasBlockers || isTimeout) && (
+          {(hasBlockers || isTimeout || isTerminated) && (
             <div className="result-view__warning card">
               <AlertTriangle size={16} />
               <span>
-                {isTimeout ? t('resultView.warnTimeout') : t('resultView.warnBlockers')}
+                {isTimeout
+                  ? t('resultView.warnTimeout')
+                  : isTerminated
+                    ? t('resultView.warnTerminated')
+                    : t('resultView.warnBlockers')}
               </span>
             </div>
           )}
@@ -805,13 +912,40 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
               </div>
             </div>
 
+            {resultTabs.length > 1 && (
+              <div className="result-notebook__iteration-tabs" role="tablist" aria-label={t('resultView.iterationTabsAria')}>
+                {resultTabs.map(tab => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={tab.id === activeResultIterationId}
+                    className={`result-notebook__iteration-tab ${tab.id === activeResultIterationId ? 'result-notebook__iteration-tab--active' : ''}`}
+                    onClick={() => {
+                      setActiveResultIterationId(tab.id)
+                      setExpandedNodeId(null)
+                    }}
+                    title={tab.title}
+                  >
+                    <span>{tab.label}</span>
+                    {tab.title && tab.title !== tab.label && <small>{tab.title}</small>}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {notebookOpen && sections.length > 1 && (
               <nav className="result-notebook__toc" aria-label={t('resultView.notebookTocAria')}>
                 {sections.map((section, index) => (
-                  <a key={section.id} href={`#${section.id}`} className="result-notebook__toc-link">
+                  <button
+                    key={section.id}
+                    type="button"
+                    className="result-notebook__toc-link"
+                    onClick={() => handleJumpToSection(section.id)}
+                  >
                     <span>{String(index + 1).padStart(2, '0')}</span>
                     {section.title}
-                  </a>
+                  </button>
                 ))}
               </nav>
             )}

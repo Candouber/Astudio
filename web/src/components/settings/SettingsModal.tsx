@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { X, Settings, Database, Activity, CheckCircle, AlertTriangle, ChevronDown, Plus, Trash2, LogIn, LogOut, Loader2, ShieldCheck } from 'lucide-react'
 import { useConfigStore } from '../../stores/configStore'
-import type { AppConfig, LLMProvider, ReasoningEffort, RoleModelConfig, ThinkingType } from '../../types'
+import type { AppConfig, LLMProvider, ModelCapabilities, ReasoningEffort, RoleModelConfig, ThinkingType } from '../../types'
 import { api } from '../../api/client'
 import type { OAuthStatus, OAuthStatusResponse } from '../../api/client'
 import { useI18n } from '../../i18n/useI18n'
@@ -112,7 +112,13 @@ export default function SettingsModal() {
   const [localConfig, setLocalConfig] = useState<AppConfig | null>(null)
   const [expandedProvider, setExpandedProvider] = useState<number | null>(null)
 
-  const [testStates, setTestStates] = useState<Record<string, { loading: boolean; success?: boolean; msg?: string }>>({})
+  const [testStates, setTestStates] = useState<Record<string, {
+    loading: boolean;
+    success?: boolean;
+    msg?: string;
+    capabilities?: ModelCapabilities;
+  }>>({})
+  const [modelCapabilities, setModelCapabilities] = useState<Record<string, ModelCapabilities>>({})
 
   const [oauthStates, setOauthStates] = useState<Record<string, OAuthStatusResponse>>({})
   const [oauthInitiating, setOauthInitiating] = useState<Record<string, boolean>>({})
@@ -130,6 +136,42 @@ export default function SettingsModal() {
       void fetchConfig()
     }
   }, [fetchConfig, isSettingsModalOpen])
+
+  useEffect(() => {
+    if (!localConfig || activeTab !== 'routing') return
+    const models = [
+      localConfig.model_assignment.agent_zero.model,
+      localConfig.model_assignment.sub_agents.model,
+      localConfig.model_assignment.distillation.model,
+    ].filter(Boolean)
+    const missing = Array.from(new Set(models)).filter(model => !modelCapabilities[model])
+    if (!missing.length) return
+
+    let cancelled = false
+    ;(async () => {
+      const entries = await Promise.all(
+        missing.map(async model => {
+          try {
+            return [model, await api.getModelCapabilities(model)] as const
+          } catch {
+            return null
+          }
+        }),
+      )
+      if (cancelled) return
+      setModelCapabilities(prev => {
+        const next = { ...prev }
+        for (const entry of entries) {
+          if (entry) next[entry[0]] = entry[1]
+        }
+        return next
+      })
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeTab, localConfig, modelCapabilities])
 
   const startOAuthPolling = useCallback((providerName: string) => {
     if (pollTimersRef.current[providerName]) {
@@ -304,7 +346,12 @@ export default function SettingsModal() {
 
       setTestStates(prev => ({
         ...prev,
-        [provider.name]: { loading: false, success: res.success, msg: res.message }
+        [provider.name]: {
+          loading: false,
+          success: res.success,
+          msg: res.message,
+          capabilities: res.capabilities,
+        }
       }))
     } catch (e: unknown) {
       setTestStates(prev => ({
@@ -498,26 +545,36 @@ export default function SettingsModal() {
                 ) : (
                   <>
                     {testState && testState.msg && (
-                       <div className={`test-badge ${testState.success ? 'success' : 'error'} mb-4`}>
-                         {testState.success ? <CheckCircle size={14} /> : <AlertTriangle size={14} />}
-                         <span>{testState.msg}</span>
-                       </div>
+                      <>
+                        <div className={`test-badge ${testState.success ? 'success' : 'error'} mb-4`}>
+                          {testState.success ? <CheckCircle size={14} /> : <AlertTriangle size={14} />}
+                          <span>{testState.msg}</span>
+                        </div>
+                        {testState.capabilities?.warnings?.length ? (
+                          <div className="model-capability-warning mb-4">
+                            <AlertTriangle size={14} />
+                            <span>{t('settings.modelCapabilityWarn')}</span>
+                          </div>
+                        ) : null}
+                      </>
                     )}
 
-                    <div className="setting-group" style={{ marginBottom: '16px' }}>
-                      <label>{t('settings.litellmSlugLabel')}</label>
-                      <p className="text-muted text-xs mb-2">
-                        {t('settings.litellmSlugHelp')}
-                      </p>
-                      <input
-                        type="text"
-                        className="input-base"
-                        placeholder={t('settings.litellmSlugPlaceholder')}
-                        value={provider.litellm_provider ?? ''}
-                        onChange={(e) => handleProviderChange(i, 'litellm_provider', e.target.value)}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                    </div>
+                    {!isDefault && (
+                      <div className="setting-group" style={{ marginBottom: '16px' }}>
+                        <label>{t('settings.litellmSlugLabel')}</label>
+                        <p className="text-muted text-xs mb-2">
+                          {t('settings.litellmSlugHelp')}
+                        </p>
+                        <input
+                          type="text"
+                          className="input-base"
+                          placeholder={t('settings.litellmSlugPlaceholder')}
+                          value={provider.litellm_provider ?? ''}
+                          onChange={(e) => handleProviderChange(i, 'litellm_provider', e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </div>
+                    )}
 
                     <div className="setting-group" style={{ marginBottom: '16px' }}>
                       <label>{t('settings.modelsListLabel')}</label>
@@ -539,45 +596,49 @@ export default function SettingsModal() {
                       />
                     </div>
 
-                    <div className="setting-group" style={{ marginBottom: '16px' }}>
-                      <label>{t('settings.modelAliasesLabel')}</label>
-                      <p className="text-muted text-xs mb-2">
-                        {t('settings.modelAliasesHelp')}
-                      </p>
-                      <textarea
-                        className="input-base"
-                        rows={3}
-                        style={{
-                          resize: 'vertical',
-                          fontFamily: 'var(--font-mono, monospace)',
-                          fontSize: '13px',
-                        }}
-                        placeholder="qwen-max = Qwen/Qwen3-235B-A22B-Instruct-2507"
-                        value={serializeModelAliases(provider)}
-                        onChange={(e) => handleModelAliasesChange(i, e.target.value)}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                    </div>
+                    {!isDefault && (
+                      <>
+                        <div className="setting-group" style={{ marginBottom: '16px' }}>
+                          <label>{t('settings.modelAliasesLabel')}</label>
+                          <p className="text-muted text-xs mb-2">
+                            {t('settings.modelAliasesHelp')}
+                          </p>
+                          <textarea
+                            className="input-base"
+                            rows={3}
+                            style={{
+                              resize: 'vertical',
+                              fontFamily: 'var(--font-mono, monospace)',
+                              fontSize: '13px',
+                            }}
+                            placeholder="qwen-max = Qwen/Qwen3-235B-A22B-Instruct-2507"
+                            value={serializeModelAliases(provider)}
+                            onChange={(e) => handleModelAliasesChange(i, e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </div>
 
-                    <div className="setting-group" style={{ marginBottom: '16px' }}>
-                      <label>{t('settings.displayNamesLabel')}</label>
-                      <p className="text-muted text-xs mb-2">
-                        {t('settings.displayNamesHelp')}
-                      </p>
-                      <textarea
-                        className="input-base"
-                        rows={3}
-                        style={{
-                          resize: 'vertical',
-                          fontFamily: 'var(--font-mono, monospace)',
-                          fontSize: '13px',
-                        }}
-                        placeholder="qwen-max = Qwen Max"
-                        value={serializeModelDisplayNames(provider)}
-                        onChange={(e) => handleModelDisplayNamesChange(i, e.target.value)}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                    </div>
+                        <div className="setting-group" style={{ marginBottom: '16px' }}>
+                          <label>{t('settings.displayNamesLabel')}</label>
+                          <p className="text-muted text-xs mb-2">
+                            {t('settings.displayNamesHelp')}
+                          </p>
+                          <textarea
+                            className="input-base"
+                            rows={3}
+                            style={{
+                              resize: 'vertical',
+                              fontFamily: 'var(--font-mono, monospace)',
+                              fontSize: '13px',
+                            }}
+                            placeholder="qwen-max = Qwen Max"
+                            value={serializeModelDisplayNames(provider)}
+                            onChange={(e) => handleModelDisplayNamesChange(i, e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </div>
+                      </>
+                    )}
 
                     <div className="setting-group" style={{ marginBottom: '16px' }}>
                       <label>{t('settings.apiKey')}</label>
@@ -688,6 +749,10 @@ export default function SettingsModal() {
             const current = localConfig.model_assignment[key]
             const currentModel = current.model || ''
             const isCustom = currentModel && !availableModels.find(m => m.value === currentModel)
+            const capabilities = currentModel ? modelCapabilities[currentModel] : undefined
+            const showExecutionWarning = key === 'sub_agents'
+              && capabilities
+              && (!capabilities.execution_agent_compatible || capabilities.supports_tool_choice === 'no')
             return (
               <div key={key} className="routing-role-card" style={{ '--role-color': color } as React.CSSProperties}>
                 <div className="routing-role-card__header">
@@ -774,6 +839,12 @@ export default function SettingsModal() {
                   <p className="text-xs mt-2" style={{ color: '#f59e0b' }}>
                     {t('settings.customWarn')}
                   </p>
+                )}
+                {showExecutionWarning && (
+                  <div className="model-capability-warning model-capability-warning--routing">
+                    <AlertTriangle size={14} />
+                    <span>{t('settings.executionModelWarn')}</span>
+                  </div>
                 )}
               </div>
             )

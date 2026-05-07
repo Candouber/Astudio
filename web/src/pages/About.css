@@ -1,0 +1,242 @@
+.about-page {
+  width: min(1040px, calc(100% - 56px));
+  margin: 0 auto;
+  padding: 32px 0 56px;
+}
+
+.about-page__header {
+  margin-bottom: 28px;
+}
+
+.about-page__title-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.about-page__title-row h1 {
+  margin: 0;
+  font-size: 2rem;
+}
+
+.about-page__title-row p {
+  margin: 4px 0 0;
+}
+
+.about-page__title-icon {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  color: var(--accent-brand);
+  background: var(--accent-brand-light);
+}
+
+.about-section {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.42fr) minmax(0, 1fr);
+  gap: 28px;
+  padding: 28px 0;
+  border-top: 1px solid var(--border-color);
+}
+
+.about-section h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.about-section p {
+  margin: 6px 0 0;
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+
+.about-info-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.about-info-grid div,
+.about-update,
+.about-link {
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.about-info-grid div {
+  padding: 16px;
+}
+
+.about-info-grid dt {
+  margin-bottom: 6px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.about-info-grid dd {
+  margin: 0;
+  color: var(--text-primary);
+  font-weight: 700;
+  word-break: break-word;
+}
+
+.about-link-list {
+  display: grid;
+  gap: 12px;
+}
+
+.about-link {
+  width: 100%;
+  min-height: 74px;
+  padding: 16px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 14px;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+
+.about-link:hover:not(:disabled) {
+  border-color: var(--border-color-hover);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.about-link:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.about-link strong,
+.about-link small {
+  display: block;
+}
+
+.about-link small {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.about-update {
+  padding: 18px;
+}
+
+.about-update__status {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.about-update__status svg {
+  flex: 0 0 20px;
+  margin-top: 1px;
+}
+
+.about-update__status strong,
+.about-update__status small {
+  display: block;
+}
+
+.about-update__status small {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.about-update--ok .about-update__status svg {
+  color: var(--accent-success);
+}
+
+.about-update--warn .about-update__status svg {
+  color: var(--accent-warning);
+}
+
+.about-update--error .about-update__status svg {
+  color: var(--accent-danger);
+}
+
+.about-update--neutral .about-update__status svg {
+  color: var(--text-muted);
+}
+
+.about-update__progress {
+  position: relative;
+  height: 24px;
+  margin-top: 16px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+}
+
+.about-update__progress span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  background: var(--accent-brand);
+  transition: width var(--transition-base);
+}
+
+.about-update__progress strong {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+}
+
+.about-update__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.about-update__actions .btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.about-update__note {
+  margin-top: 14px;
+  font-size: 0.78rem;
+}
+
+.about-spin {
+  animation: about-spin 0.8s linear infinite;
+}
+
+@keyframes about-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 860px) {
+  .about-page {
+    width: min(100% - 32px, 1040px);
+  }
+
+  .about-section {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .about-info-grid {
+    grid-template-columns: 1fr;
+  }
+}

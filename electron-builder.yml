@@ -69,3 +69,5 @@ linux:
 
 publish:
   provider: github
+  owner: Candouber
+  repo: Astudio

@@ -534,6 +534,12 @@ class TaskStore:
                     WHERE id=(SELECT current_iteration_id FROM tasks WHERE id=?)""",
                 iter_params,
             )
+            if status in {"failed", "timeout_killed", "terminated"}:
+                await self._close_active_execution_records_with_db(
+                    db,
+                    task_id,
+                    f"[{status.upper()}] Task execution ended before this step completed.",
+                )
             await db.commit()
         finally:
             await db.close()
@@ -556,9 +562,42 @@ class TaskStore:
                    WHERE id=(SELECT current_iteration_id FROM tasks WHERE id=?)""",
                 (status, reason, now, now, task_id),
             )
+            await self._close_active_execution_records_with_db(db, task_id, reason)
             await db.commit()
         finally:
             await db.close()
+
+    async def close_active_execution_records(self, task_id: str, reason: str) -> None:
+        """把仍处于活跃态的子任务和流程节点落到终态，避免前端残留 running。"""
+        db = await get_db()
+        try:
+            await self._close_active_execution_records_with_db(db, task_id, reason)
+            await db.commit()
+        finally:
+            await db.close()
+
+    async def _close_active_execution_records_with_db(self, db, task_id: str, reason: str) -> None:
+        now = datetime.now().isoformat()
+        await db.execute(
+            """UPDATE sub_tasks
+               SET status = 'blocked',
+                   blocker_reason = COALESCE(NULLIF(blocker_reason, ''), ?),
+                   updated_at = ?
+               WHERE task_id = ?
+                 AND status IN ('pending', 'running', 'pending_review', 'revision_requested')""",
+            (reason, now, task_id),
+        )
+        await db.execute(
+            """UPDATE path_nodes
+               SET status = 'error',
+                   output = CASE
+                       WHEN output IS NULL OR output = '' OR status = 'running' THEN ?
+                       ELSE output
+                   END
+               WHERE task_id = ?
+                 AND status IN ('pending', 'running')""",
+            (reason, task_id),
+        )
 
     async def set_status_message(self, task_id: str, message: str) -> None:
         """更新人可读进展（与 status 正交），并刷新任务活动时间。"""

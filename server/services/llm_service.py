@@ -14,6 +14,7 @@ from models.config import (
     parse_app_config,
     resolve_litellm_slug,
 )
+from services.model_capabilities import ModelCapabilities, infer_model_capabilities, supports_tool_choice
 from storage.database import CONFIG_PATH
 
 _RETRY_DELAYS = (3.0, 8.0)
@@ -32,6 +33,19 @@ _TRANSIENT_MARKERS = (
 
 def _is_transient(exc: Exception) -> bool:
     return any(m in str(exc).lower() for m in _TRANSIENT_MARKERS)
+
+
+def _is_unsupported_tool_choice(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return (
+        "tool_choice" in message
+        and (
+            "does not support" in message
+            or "not support" in message
+            or "unsupported" in message
+            or "invalid_request_error" in message
+        )
+    )
 
 
 class _Func:
@@ -201,6 +215,13 @@ class LLMService:
                     f"timeout={timeout}s)"
                 )
             except Exception as e:
+                if kwargs.get("tool_choice") and _is_unsupported_tool_choice(e):
+                    removed = kwargs.pop("tool_choice", None)
+                    logger.warning(
+                        f"LLM model={kwargs.get('model')} rejected tool_choice={removed!r}; "
+                        "retrying once without tool_choice"
+                    )
+                    return await self._call_litellm(**kwargs)
                 if not _is_transient(e):
                     logger.error(f"LLM non-transient error model={kwargs.get('model')}: {e}")
                     raise   # 非瞬时错误直接抛出，不重试
@@ -285,6 +306,10 @@ class LLMService:
                     return f"{provider.name}/{alias}"
         return model
 
+    def get_model_capabilities(self, model: str) -> ModelCapabilities:
+        resolved_model = self._resolve_model_id(model)
+        return infer_model_capabilities(resolved_model)
+
     def get_model_display_name_for_role(self, role: str) -> str:
         return self.get_model_display_name(self.get_role_config(role).model)
 
@@ -355,8 +380,12 @@ class LLMService:
 
         if tools:
             kwargs["tools"] = tools
-        if tool_choice:
+        if tool_choice and supports_tool_choice(model, tool_choice):
             kwargs["tool_choice"] = tool_choice
+        elif tool_choice:
+            logger.warning(
+                f"Skipping unsupported tool_choice for model={model}: {tool_choice!r}"
+            )
 
         response = await self._call_litellm(**kwargs)
 
@@ -438,8 +467,12 @@ class LLMService:
             kwargs["response_format"] = response_format
         if tools:
             kwargs["tools"] = tools
-        if tool_choice:
+        if tool_choice and supports_tool_choice(model, tool_choice):
             kwargs["tool_choice"] = tool_choice
+        elif tool_choice:
+            logger.warning(
+                f"Skipping unsupported tool_choice for model={model}: {tool_choice!r}"
+            )
 
         response = await self._call_litellm(**kwargs)
         total_tokens = 0

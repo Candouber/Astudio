@@ -132,6 +132,45 @@ def _plan_review_text(steps: list, source_text: str, *, clarified: bool = False)
     return f"{title}:\n{plan_details}\n\nReview and approve to start, or add revision feedback."
 
 
+async def _save_plan_for_review(
+    task_id: str,
+    studio_id: str,
+    steps: list,
+    source_text: str,
+    *,
+    input_text: str | None = None,
+    label: str | None = None,
+    clarified: bool = False,
+) -> PathNode:
+    plan_str = _plan_review_text(steps, source_text, clarified=clarified)
+    task_snap = await task_store.get(task_id)
+    x_offset = _iteration_x_offset(task_snap)
+    is_zh = is_chinese(source_text)
+    if not label:
+        label = "方案审批" if is_zh else "Plan Review"
+        if task_snap and len(task_snap.iterations) > 1:
+            default_title = "继续迭代" if is_zh else "Continue Iteration"
+            iteration_title = task_snap.iterations[-1].title or default_title
+            label = f"{iteration_title}: {'方案审批' if is_zh else 'Plan Approval'}"
+    node_id = str(uuid.uuid4())[:8]
+    root_node = PathNode(
+        id=node_id,
+        type="agent_zero",
+        agent_role="CEO",
+        step_label=label,
+        input=input_text or source_text,
+        output=plan_str,
+        status="pending",
+        position={"x": 400 + x_offset, "y": 50},
+    )
+    await task_store.add_node(task_id, root_node)
+    await task_store.link_current_iteration_root(task_id, root_node.id)
+    await task_store.save_plan_steps(task_id, studio_id, steps)
+    await task_store.set_status_message(task_id, enc("backendTaskStatus.await_plan_review"))
+    await task_store.update_task_status(task_id, "await_leader_plan_approval")
+    return root_node
+
+
 def _not_answered_text(source_text: str) -> str:
     return "未回答" if is_chinese(source_text) else "Not answered"
 
@@ -342,30 +381,7 @@ async def _run_ask_pipeline(task_id: str, question: str, preferred_studio_id: st
     steps = plan_data.get("steps", [])
     _validate_dag(steps)
 
-    plan_str = _plan_review_text(steps, question)
-
-    task_snap = await task_store.get(task_id)
-    x_offset = _iteration_x_offset(task_snap)
-    node_id = str(uuid.uuid4())[:8]
-    root_node = PathNode(
-        id=node_id, type="agent_zero", agent_role="CEO",
-        step_label=(
-            "方案审批"
-            if is_chinese(question) and (not task_snap or len(task_snap.iterations) <= 1)
-            else (
-                f"{task_snap.iterations[-1].title or ('继续迭代' if is_chinese(question) else 'Continue Iteration')}: {'方案审批' if is_chinese(question) else 'Plan Approval'}"
-                if task_snap and len(task_snap.iterations) > 1
-                else "Plan Review"
-            )
-        ),
-        input=question, output=plan_str,
-        status="pending", position={"x": 400 + x_offset, "y": 50}
-    )
-    await task_store.add_node(task_id, root_node)
-    await task_store.link_current_iteration_root(task_id, root_node.id)
-    await task_store.save_plan_steps(task_id, studio_id, steps)
-    await task_store.set_status_message(task_id, enc("backendTaskStatus.await_plan_review"))
-    await task_store.update_task_status(task_id, "await_leader_plan_approval")
+    await _save_plan_for_review(task_id, studio_id, steps, question)
 
 
 # ──────────────────────────────────────────────
@@ -597,20 +613,15 @@ async def clarify_task(task_id: str, request: Request, payload: dict):
         steps = plan_data.get("steps", [])
         _validate_dag(steps)
 
-        plan_str = _plan_review_text(steps, task.question, clarified=True)
-        x_offset = _iteration_x_offset(await task_store.get(task_id))
-        node_id = str(uuid.uuid4())[:8]
-        root_node = PathNode(
-            id=node_id, type="agent_zero", agent_role="CEO",
-            step_label="方案审批（已包含补充信息）" if is_chinese(task.question) else "Plan Review (Clarifications Included)",
-            input=task.question, output=plan_str,
-            status="pending", position={"x": 400 + x_offset, "y": 50}
+        root_node = await _save_plan_for_review(
+            task_id,
+            studio_id,
+            steps,
+            task.question,
+            input_text=goal_with_answers,
+            label="方案审批（已包含补充信息）" if is_chinese(task.question) else "Plan Review (Clarifications Included)",
+            clarified=True,
         )
-        await task_store.add_node(task_id, root_node)
-        await task_store.link_current_iteration_root(task_id, root_node.id)
-        await task_store.save_plan_steps(task_id, studio_id, steps)
-        await task_store.set_status_message(task_id, enc("backendTaskStatus.await_plan_review"))
-        await task_store.update_task_status(task_id, "await_leader_plan_approval")
         yield {"event": "node_added", "data": json.dumps(root_node.model_dump(), default=_json_serial)}
         yield _status("await_leader_plan_approval", enc("backendTaskStatus.await_plan_review"))
         yield {"event": "done_pause", "data": json.dumps({
@@ -799,9 +810,27 @@ async def _execute_background_orchestration(task_id: str, studio_id: str, route_
                     question_with_feedback = task.question + f"\n[User requested plan revision: {feedback}]"
                 await task_store.update_task_status(task_id, "planning")
                 plan_data = await _run_leader_planning(task_id, studio_id, question_with_feedback)
+                if plan_data.get("action") == "need_clarification":
+                    questions = plan_data.get("questions", [])
+                    await task_store.save_clarification(task_id, studio_id, questions)
+                    await task_store.set_status_message(task_id, enc("backendTaskStatus.leader_need_clarification"))
+                    await task_store.update_task_status(task_id, "need_clarification")
+                    return
                 steps = plan_data.get("steps", [])
                 _validate_dag(steps)
-                await task_store.save_plan_steps(task_id, studio_id, steps)
+                await _save_plan_for_review(
+                    task_id,
+                    studio_id,
+                    steps,
+                    task.question,
+                    input_text=question_with_feedback,
+                    label=(
+                        "方案审批（已按修改意见重做）"
+                        if is_chinese(task.question or feedback)
+                        else "Plan Review (Revision Applied)"
+                    ),
+                )
+                return
             elif not steps and task.plan_steps:
                 steps = task.plan_steps
 
@@ -979,6 +1008,9 @@ async def _execute_dag(
                 result = await exec_task
             except asyncio.CancelledError:
                 logger.info(f"[Task {task_id}] 子步骤 {sid} 被用户中断")
+                await task_store.update_sub_task_status(
+                    ids["sub_task_id"], "blocked", blocker_reason="[TERMINATED] 子步骤已被用户中断"
+                )
                 await task_store.update_node_status(
                     ids["ui_node_id"], "error", "[TERMINATED] 子步骤已被用户中断"
                 )
@@ -1612,6 +1644,8 @@ async def terminate_task(task_id: str):
     if worker_cnt:
         logger.info(f"[Task {task_id}] 已终止隔离执行进程")
 
+    await task_store.close_active_execution_records(task_id, "[TERMINATED] 任务已被用户终止")
+
     # 立即更新任务状态，让前端感知
     await task_store.update_task_status(task_id, "terminated")
 
@@ -2166,6 +2200,30 @@ async def recover_interrupted_executions() -> None:
     """
     from storage.database import get_db
     db = await get_db()
+
+    async def close_active_records(task_id: str, reason: str) -> None:
+        now = datetime.now().isoformat()
+        await db.execute(
+            """UPDATE sub_tasks
+               SET status = 'blocked',
+                   blocker_reason = COALESCE(NULLIF(blocker_reason, ''), ?),
+                   updated_at = ?
+               WHERE task_id = ?
+                 AND status IN ('pending', 'running', 'pending_review', 'revision_requested')""",
+            (reason, now, task_id),
+        )
+        await db.execute(
+            """UPDATE path_nodes
+               SET status = 'error',
+                   output = CASE
+                       WHEN output IS NULL OR output = '' OR status = 'running' THEN ?
+                       ELSE output
+                   END
+               WHERE task_id = ?
+                 AND status IN ('pending', 'running')""",
+            (reason, task_id),
+        )
+
     try:
         cursor = await db.execute(
             "SELECT id, status FROM tasks WHERE status IN ('planning', 'executing')"
@@ -2192,7 +2250,32 @@ async def recover_interrupted_executions() -> None:
                     tid,
                 ),
             )
+            await close_active_records(tid, reason)
             logger.info(f"Recovery: task {tid} from '{old_status}' → 'terminated'")
+
+        cursor = await db.execute(
+            """SELECT id, status FROM tasks
+               WHERE status IN ('terminated', 'failed', 'timeout_killed')
+                 AND (
+                   EXISTS (
+                     SELECT 1 FROM sub_tasks
+                     WHERE sub_tasks.task_id = tasks.id
+                       AND sub_tasks.status IN ('pending', 'running', 'pending_review', 'revision_requested')
+                   )
+                   OR EXISTS (
+                     SELECT 1 FROM path_nodes
+                     WHERE path_nodes.task_id = tasks.id
+                       AND path_nodes.status IN ('pending', 'running')
+                   )
+                 )"""
+        )
+        rows = await cursor.fetchall()
+        for row in rows:
+            tid = row["id"]
+            status = row["status"]
+            reason = f"[{status.upper()}] Task execution ended before this step completed."
+            await close_active_records(tid, reason)
+            logger.info(f"Recovery: closed active child records for terminal task {tid} ({status})")
         await db.commit()
     except Exception as e:
         logger.error(f"recover_interrupted_executions failed: {e}")

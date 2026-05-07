@@ -205,6 +205,18 @@ export interface RoleModelConfig {
   thinking_budget_tokens?: number | null;
 }
 
+export type ModelCapabilitySupport = 'yes' | 'no' | 'partial' | 'unknown'
+
+export interface ModelCapabilities {
+  model: string
+  supports_tools: ModelCapabilitySupport
+  supports_tool_choice: ModelCapabilitySupport
+  supports_reasoning_effort: ModelCapabilitySupport
+  supports_thinking: ModelCapabilitySupport
+  execution_agent_compatible: boolean
+  warnings: string[]
+}
+
 export interface Annotation {
   id: string
   task_id: string

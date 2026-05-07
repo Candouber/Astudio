@@ -15,6 +15,7 @@ from models.config import (
     normalize_config,
     resolve_litellm_slug,
 )
+from services.model_capabilities import ModelCapabilities, infer_model_capabilities
 from storage.config_store import ConfigStore
 
 router = APIRouter()
@@ -187,7 +188,15 @@ class ProviderTestRequest(BaseModel):
     model_aliases: dict[str, str] = Field(default_factory=dict)
 
 
-@router.post("/test")
+class ProviderTestResponse(BaseModel):
+    success: bool
+    message: str
+    reply: Optional[str] = None
+    model: Optional[str] = None
+    capabilities: Optional[ModelCapabilities] = None
+
+
+@router.post("/test", response_model=ProviderTestResponse)
 async def test_provider_connection(req: ProviderTestRequest):
     """测试给定供应商配置能否成功接通大模型"""
     try:
@@ -223,11 +232,29 @@ async def test_provider_connection(req: ProviderTestRequest):
         logger.info(f"Testing litellm connection with args: {safe_kwargs}")
 
         response = completion(**kwargs)
+        capabilities = infer_model_capabilities(test_model)
 
-        return {"success": True, "message": "Connection successful", "reply": response.choices[0].message.content}
+        return {
+            "success": True,
+            "message": "Connection successful",
+            "reply": response.choices[0].message.content,
+            "model": test_model,
+            "capabilities": capabilities,
+        }
     except Exception as e:
         logger.warning(f"Connection test error: {e}")
         return {"success": False, "message": str(e)}
+
+
+class ModelCapabilitiesRequest(BaseModel):
+    model: str
+
+
+@router.post("/model-capabilities", response_model=ModelCapabilities)
+async def get_model_capabilities(req: ModelCapabilitiesRequest):
+    from services.llm_service import llm_service
+
+    return llm_service.get_model_capabilities(req.model)
 
 
 @router.post("/oauth/{provider_name}/initiate")

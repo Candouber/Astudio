@@ -1,0 +1,100 @@
+.toast-viewport {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 10020;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.toast-bubble {
+  width: min(360px, calc(100vw - 36px));
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) 24px;
+  gap: 10px;
+  align-items: start;
+  padding: 12px 12px 12px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-primary) 94%, transparent);
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.16);
+  color: var(--text-primary);
+  pointer-events: auto;
+  animation: toast-in 180ms ease-out;
+}
+
+.toast-bubble__icon {
+  margin-top: 2px;
+  display: inline-flex;
+}
+
+.toast-bubble--success .toast-bubble__icon { color: var(--accent-success); }
+.toast-bubble--warning .toast-bubble__icon { color: var(--accent-warning); }
+.toast-bubble--error .toast-bubble__icon { color: var(--accent-danger); }
+.toast-bubble--info .toast-bubble__icon { color: var(--accent-brand); }
+
+.toast-bubble__copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.toast-bubble__copy strong {
+  font-size: 0.86rem;
+  font-weight: 750;
+}
+
+.toast-bubble__copy span {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toast-bubble__close {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 20px;
+}
+
+.toast-bubble__close:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+@keyframes toast-in {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@media (max-width: 720px) {
+  .toast-viewport {
+    left: 14px;
+    right: 14px;
+    bottom: 14px;
+    align-items: stretch;
+  }
+
+  .toast-bubble {
+    width: 100%;
+  }
+}

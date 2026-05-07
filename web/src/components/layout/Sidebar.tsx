@@ -3,6 +3,7 @@ import {
   Box,
   Building2,
   CalendarClock,
+  Info,
   Languages,
   LayoutDashboard,
   MessageSquare,
@@ -22,6 +23,7 @@ const NAV_ITEMS = [
   { to: '/sandboxes', icon: Box, labelKey: 'sidebar.nav.sandboxes' as const },
   { to: '/schedules', icon: CalendarClock, labelKey: 'sidebar.nav.schedules' as const },
   { to: '/skills', icon: Wrench, labelKey: 'sidebar.nav.skills' as const },
+  { to: '/about', icon: Info, labelKey: 'sidebar.nav.about' as const },
 ]
 
 interface SidebarProps {

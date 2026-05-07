@@ -399,6 +399,58 @@
   color: var(--accent-brand);
 }
 
+.result-notebook__iteration-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 14px 26px 0;
+}
+
+.result-notebook__iteration-tab {
+  min-width: 104px;
+  max-width: 220px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.result-notebook__iteration-tab:hover {
+  border-color: color-mix(in srgb, var(--accent-brand) 34%, var(--border-color));
+  color: var(--text-primary);
+}
+
+.result-notebook__iteration-tab span,
+.result-notebook__iteration-tab small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result-notebook__iteration-tab span {
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.result-notebook__iteration-tab small {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.result-notebook__iteration-tab--active {
+  border-color: color-mix(in srgb, var(--accent-brand) 48%, var(--border-color));
+  background: var(--accent-brand-light);
+  color: var(--accent-brand);
+}
+
 .result-notebook__toc {
   display: flex;
   flex-wrap: wrap;
@@ -418,6 +470,8 @@
   color: var(--text-secondary);
   text-decoration: none;
   font-size: 0.82rem;
+  font-family: inherit;
+  cursor: pointer;
   transition: all var(--transition-fast);
 }
 
@@ -442,6 +496,7 @@
   grid-template-columns: 56px minmax(0, 1fr);
   gap: 18px;
   padding: 24px 26px;
+  scroll-margin-top: 16px;
   border-top: 1px solid rgba(0, 0, 0, 0.04);
   background:
     linear-gradient(to bottom, rgba(77, 109, 255, 0.06) 1px, transparent 1px) 0 27px / 100% 36px,

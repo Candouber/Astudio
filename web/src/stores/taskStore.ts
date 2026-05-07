@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import { translate } from '../i18n/t'
 import { useChatStore } from './chatStore'
 import { useLocaleStore } from './localeStore'
+import { useToastStore, type ToastTone } from './toastStore'
 
 const ACTIVE_TASK_STATUSES = new Set<TaskStatus>(['planning', 'executing'])
 
@@ -58,6 +59,32 @@ function buildNodeActivityFromTask(task: Task) {
   }
 
   return activity
+}
+
+function taskStatusToastTone(status: TaskStatus): ToastTone {
+  if (status === 'completed') return 'success'
+  if (status === 'completed_with_blockers' || status === 'need_clarification' || status === 'await_leader_plan_approval') {
+    return 'warning'
+  }
+  if (status === 'failed' || status === 'timeout_killed' || status === 'terminated') return 'error'
+  return 'info'
+}
+
+function notifyTaskStatusChange(previous: Task | null, next: Task | null) {
+  if (!previous || !next || previous.id !== next.id || previous.status === next.status) return
+  const loc = useLocaleStore.getState().locale
+  const prevLabel = translate(loc, `chat.status.${previous.status}`)
+  const nextLabel = translate(loc, `chat.status.${next.status}`)
+  const title = translate(loc, 'toast.taskStatusChanged')
+  const message = translate(loc, 'toast.taskStatusChangedMessage', {
+    from: prevLabel,
+    to: nextLabel,
+  })
+  useToastStore.getState().showToast({
+    title,
+    message,
+    tone: taskStatusToastTone(next.status),
+  })
 }
 
 interface TaskState {
@@ -150,9 +177,11 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   setTask: (task) => {
     const expected = get().expectedTaskId
     if (expected && expected !== task.id) return // 串台保护
+    const previousTask = get().currentTask
     const isActive = task.status === 'planning' || task.status === 'executing'
     const rebuiltActivity = buildNodeActivityFromTask(task)
     syncChatTaskStatus(task.id, task.status, task.status_message)
+    notifyTaskStatusChange(previousTask, task)
     set({
       currentTask: task,
       nodes: task.nodes,
@@ -169,6 +198,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     try {
       const task = await api.getTask(taskId)
       if (get().expectedTaskId && get().expectedTaskId !== taskId) return
+      const previousTask = get().currentTask
       const hasSteps =
         task.status === 'await_leader_plan_approval' &&
         (task.plan_steps?.length ?? 0) > 0
@@ -177,6 +207,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         (task.clarification_questions?.length ?? 0) > 0
       const rebuiltActivity = buildNodeActivityFromTask(task)
       syncChatTaskStatus(task.id, task.status, task.status_message)
+      notifyTaskStatusChange(previousTask, task)
       set({
         currentTask: task,
         nodes: task.nodes,
@@ -224,6 +255,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   updateTaskStatus: (status) => {
     const task = get().currentTask
     if (task) syncChatTaskStatus(task.id, status, task.status_message)
+    if (task) notifyTaskStatusChange(task, { ...task, status })
     set((state) => {
       const isActive = status === 'planning' || status === 'executing'
       return {

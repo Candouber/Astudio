@@ -16,6 +16,9 @@ MAX_REACT_STEPS = 20
 _TOOL_RESULT_MAX_CHARS = 12_000
 _MAX_NO_TOOL_STREAK = 2
 _MAX_CONSECUTIVE_TOOL_FAILURES = 2
+_SEARCH_TOOL_NAMES = {"web_search", "browser_search"}
+_MAX_SEARCH_TOOL_CALLS = 4
+_MAX_REPEATED_SEARCH_QUERY_CALLS = 1
 _FAILURE_PREFIXES = (
     "[Search failed]",
     "[Browser search failed]",
@@ -115,6 +118,11 @@ def _is_failed_tool_result(text: str) -> bool:
     return value.startswith(_FAILURE_PREFIXES) or "TimeoutError" in value
 
 
+def _normalize_search_query(args: Dict[str, Any]) -> str:
+    query = str(args.get("query") or args.get("q") or "").strip().lower()
+    return " ".join(query.split())[:240]
+
+
 def _structured_observation(tool_name: str, result: str) -> tuple[str, bool]:
     failed = _is_failed_tool_result(result)
     payload = {
@@ -129,6 +137,20 @@ def _structured_observation(tool_name: str, result: str) -> tuple[str, bool]:
             "submit a best-effort deliverable, or report a blocker."
         )
     return json.dumps(payload, ensure_ascii=False), failed
+
+
+def _controller_observation(tool_name: str, reason: str) -> tuple[str, bool]:
+    payload = {
+        "tool": tool_name,
+        "ok": False,
+        "status": "blocked_by_controller",
+        "result": reason,
+        "instruction": (
+            "Stop repeating this search path. Use the available context to submit a best-effort "
+            "deliverable, or report a blocker if the missing evidence makes the task unsafe."
+        ),
+    }
+    return json.dumps(payload, ensure_ascii=False), True
 
 
 class SubAgentExecutor:
@@ -200,6 +222,8 @@ class SubAgentExecutor:
             force_finalization = False
             finalization_reason = ""
             protocol_tools = _protocol_tool_schemas(tools)
+            search_tool_calls = 0
+            search_query_counts: Dict[str, int] = {}
 
             async def _emit(msg: str) -> None:
                 if progress_callback is None:
@@ -210,7 +234,12 @@ class SubAgentExecutor:
                     logger.debug(f"[{agent_role}] progress_callback 失败（忽略）: {cb_err}")
 
             for step in range(MAX_REACT_STEPS):
-                logger.debug(f"[{agent_role}] ReAct step {step + 1}/{MAX_REACT_STEPS}")
+                logger.info(
+                    f"[{agent_role}] ReAct step {step + 1}/{MAX_REACT_STEPS} "
+                    f"force_finalization={force_finalization} "
+                    f"search_calls={search_tool_calls}/{_MAX_SEARCH_TOOL_CALLS} "
+                    f"tool_failures={consecutive_tool_failures}"
+                )
                 current_tools = protocol_tools if force_finalization else tools
                 tool_choice = "required" if force_finalization else None
                 if force_finalization:
@@ -308,21 +337,76 @@ class SubAgentExecutor:
                         else f"Calling tools: {tool_summary}..."
                     )
 
-                    async def _exec(tc):
+                    prepared_calls: List[tuple[Any, Dict[str, Any], Optional[tuple[str, bool]]]] = []
+                    blocked_by_controller = 0
+                    for tc in real_calls:
                         tool_name = tc.function.name
                         try:
                             args = json.loads(tc.function.arguments)
                         except json.JSONDecodeError:
                             args = {}
-                        logger.info(f"[{agent_role}] 调用工具: {tool_name}({list(args.keys())})")
+
+                        controller_result: Optional[tuple[str, bool]] = None
+                        if tool_name in _SEARCH_TOOL_NAMES:
+                            normalized_query = _normalize_search_query(args)
+                            query_count = search_query_counts.get(normalized_query, 0)
+                            if search_tool_calls >= _MAX_SEARCH_TOOL_CALLS:
+                                reason = (
+                                    f"Search budget exhausted "
+                                    f"({_MAX_SEARCH_TOOL_CALLS} calls). Query was: {normalized_query!r}."
+                                )
+                                controller_result = _controller_observation(tool_name, reason)
+                            elif normalized_query and query_count >= _MAX_REPEATED_SEARCH_QUERY_CALLS:
+                                reason = (
+                                    "Repeated identical search query blocked by controller. "
+                                    f"Query was: {normalized_query!r}."
+                                )
+                                controller_result = _controller_observation(tool_name, reason)
+                            else:
+                                search_tool_calls += 1
+                                if normalized_query:
+                                    search_query_counts[normalized_query] = query_count + 1
+
+                            logger.info(
+                                f"[{agent_role}] search_tool_call step={step + 1} "
+                                f"name={tool_name} query={normalized_query!r} "
+                                f"allowed={controller_result is None} "
+                                f"budget={search_tool_calls}/{_MAX_SEARCH_TOOL_CALLS} "
+                                f"query_count={search_query_counts.get(normalized_query, 0)}"
+                            )
+                            if controller_result is not None:
+                                blocked_by_controller += 1
+                                logger.warning(
+                                    f"[{agent_role}] search blocked by controller: {reason}"
+                                )
+                        else:
+                            logger.info(
+                                f"[{agent_role}] tool_call step={step + 1} "
+                                f"name={tool_name} args={list(args.keys())}"
+                            )
+
+                        prepared_calls.append((tc, args, controller_result))
+
+                    async def _exec(tc, args: Dict[str, Any], controller_result: Optional[tuple[str, bool]]):
+                        tool_name = tc.function.name
+                        if controller_result is not None:
+                            observation, failed = controller_result
+                            return tc, observation, failed
                         try:
                             result = await execute_tool(tool_name, args)
                         except Exception as e:
                             result = f"[Tool execution error] {type(e).__name__}: {e}"
                         observation, failed = _structured_observation(tool_name, str(result))
+                        logger.info(
+                            f"[{agent_role}] tool_result step={step + 1} "
+                            f"name={tool_name} failed={failed} len={len(observation)}"
+                        )
                         return tc, observation, failed
 
-                    tool_results = await asyncio.gather(*[_exec(tc) for tc in real_calls])
+                    tool_results = await asyncio.gather(*[
+                        _exec(tc, args, controller_result)
+                        for tc, args, controller_result in prepared_calls
+                    ])
                     await _emit(
                         f"正在处理工具结果: {tool_summary}..."
                         if zh_progress
@@ -341,7 +425,10 @@ class SubAgentExecutor:
                         consecutive_tool_failures += failed_count
                     else:
                         consecutive_tool_failures = 0
-                    if consecutive_tool_failures >= _MAX_CONSECUTIVE_TOOL_FAILURES:
+                    if (
+                        not protocol_calls
+                        and consecutive_tool_failures >= _MAX_CONSECUTIVE_TOOL_FAILURES
+                    ):
                         force_finalization = True
                         finalization_reason = (
                             "The controller detected repeated tool failures in this sub-task. "
@@ -352,6 +439,25 @@ class SubAgentExecutor:
                         )
                         logger.warning(
                             f"[{agent_role}] 连续工具失败 {consecutive_tool_failures} 次，进入强制收口"
+                        )
+                        continue
+                    if (
+                        not protocol_calls
+                        and (blocked_by_controller or search_tool_calls >= _MAX_SEARCH_TOOL_CALLS)
+                    ):
+                        force_finalization = True
+                        finalization_reason = (
+                            "The controller detected that this sub-task has exhausted its search budget "
+                            "or is repeating equivalent search queries. Stop calling search tools now. "
+                            "Choose exactly one protocol tool:\n"
+                            "- `submit_task_deliverable` if you can provide a useful best-effort result from the available context, clearly marking unverified parts.\n"
+                            "- `report_system_blocker` if the missing search evidence makes the task impossible to complete safely.\n"
+                            "Follow the Response Language Policy for the submitted deliverable or blocker reason.\n"
+                        )
+                        logger.warning(
+                            f"[{agent_role}] 搜索预算触发强制收口: "
+                            f"search_calls={search_tool_calls}/{_MAX_SEARCH_TOOL_CALLS}, "
+                            f"blocked_by_controller={blocked_by_controller}"
                         )
                         continue
 

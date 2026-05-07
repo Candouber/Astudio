@@ -11,7 +11,6 @@ from urllib.parse import quote_plus
 import httpx
 from loguru import logger
 
-
 _BROWSER_DUMP_TIMEOUT_SECONDS = 60
 _BROWSER_CLI_LOCK = asyncio.Lock()
 

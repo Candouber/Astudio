@@ -27,6 +27,7 @@ const zh: TranslationTree = {
     breadcrumbClarification: '需求确认',
     breadcrumbExec: '执行监控',
     breadcrumbPlanning: '规划中...',
+    tabCurrent: '当前',
     tabResult: '结果',
     tabFlow: '流程图',
     sandboxCollapse: '收起沙箱现场',

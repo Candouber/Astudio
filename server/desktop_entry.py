@@ -24,8 +24,9 @@ from main import app  # noqa: E402
 
 
 def _run_task_worker() -> int:
-    from workers.task_worker import main as worker_main
     import asyncio
+
+    from workers.task_worker import main as worker_main
 
     return asyncio.run(worker_main())
 

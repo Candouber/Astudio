@@ -132,26 +132,62 @@
 .skill-pool-groups {
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: 10px;
 }
 
 .skill-pool-group {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .skill-pool-group__title {
+  width: 100%;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  min-height: 46px;
+  padding: 0 14px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
   font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.skill-pool-group__title:hover {
+  border-color: var(--border-color-hover);
+  background: var(--bg-secondary);
+}
+
+.skill-pool-group__title span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .skill-pool-group__title em {
   color: var(--text-muted);
   font-style: normal;
   font-size: 0.78rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-secondary);
+}
+
+.skill-pool-group__chevron {
+  color: var(--text-muted);
+  transition: transform var(--transition-fast);
+}
+
+.skill-pool-group--open .skill-pool-group__chevron {
+  transform: rotate(90deg);
 }
 
 .skill-pool-list {

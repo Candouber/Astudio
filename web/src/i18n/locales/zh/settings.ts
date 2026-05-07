@@ -79,6 +79,8 @@ const zh: TranslationTree = {
     thinkingBudget: '思考预算（仅 Anthropic）',
     thinkingBudgetPlaceholder: '留空表示不单独指定',
     customWarn: '⚠️ 当前值为手动输入，未在已连通供应商中找到对应模型。',
+    modelCapabilityWarn: '该模型存在能力兼容风险，请避免用于需要工具强制调用的执行链路。',
+    executionModelWarn: '该模型不适合作为执行 Agent：可能不支持 tool_choice 或多轮工具循环，建议改用 deepseek-chat 等工具兼容模型。',
     modalTitle: '系统配置',
     tabProviders: '模型供应商 API',
     tabRouting: '角色模型分路',

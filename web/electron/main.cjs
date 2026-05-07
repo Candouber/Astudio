@@ -1,4 +1,5 @@
-const { app, BrowserWindow, dialog } = require('electron')
+const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron')
+const { autoUpdater } = require('electron-updater')
 const { spawn } = require('node:child_process')
 const crypto = require('node:crypto')
 const fs = require('node:fs')
@@ -15,6 +16,12 @@ const RENDERER_URL = process.env.ELECTRON_RENDERER_URL || process.env.VITE_DEV_S
 const APP_ICON_PATH = resolveAppIconPath()
 const USER_DATA_DIR = app.getPath('userData')
 const DATA_DIR = process.env.ASTUDIO_DATA_DIR || path.join(USER_DATA_DIR, 'data')
+const REPOSITORY_URL = 'https://github.com/Candouber/Astudio'
+const HOMEPAGE_URL = ''
+
+autoUpdater.autoDownload = false
+autoUpdater.autoInstallOnAppQuit = false
+autoUpdater.allowPrerelease = true
 
 app.setAppUserModelId(app.getName())
 
@@ -31,9 +38,127 @@ let browserBridge = null
 let browserBridgeUrl = ''
 const browserBridgeToken = crypto.randomUUID()
 let browserBridgeQueue = Promise.resolve()
+let updaterConfigured = false
+let updateCheckInFlight = null
+let updateDownloadInFlight = null
+let updateState = {
+  status: 'idle',
+  updateInfo: null,
+  error: '',
+  downloaded: false,
+  checkingAt: '',
+  downloadProgress: null,
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function serializeUpdateInfo(info) {
+  if (!info || typeof info !== 'object') return null
+  return {
+    version: info.version || '',
+    releaseName: info.releaseName || '',
+    releaseDate: info.releaseDate || '',
+  }
+}
+
+function emitUpdateState() {
+  if (!win || win.isDestroyed()) return
+  win.webContents.send('app:update-state', updateState)
+}
+
+function setUpdateState(patch) {
+  updateState = { ...updateState, ...patch }
+  emitUpdateState()
+  return updateState
+}
+
+function updateUnsupportedState() {
+  return setUpdateState({
+    status: 'unsupported',
+    error: 'Updates are available only in packaged desktop builds.',
+    downloaded: false,
+    downloadProgress: null,
+  })
+}
+
+function configureAutoUpdater() {
+  if (updaterConfigured) return
+  updaterConfigured = true
+
+  autoUpdater.on('checking-for-update', () => {
+    setUpdateState({
+      status: 'checking',
+      error: '',
+      checkingAt: new Date().toISOString(),
+      downloaded: false,
+      downloadProgress: null,
+    })
+  })
+  autoUpdater.on('update-available', (info) => {
+    setUpdateState({
+      status: 'available',
+      updateInfo: serializeUpdateInfo(info),
+      error: '',
+      downloaded: false,
+      downloadProgress: null,
+    })
+  })
+  autoUpdater.on('update-not-available', (info) => {
+    setUpdateState({
+      status: 'not-available',
+      updateInfo: serializeUpdateInfo(info),
+      error: '',
+      downloaded: false,
+      downloadProgress: null,
+    })
+  })
+  autoUpdater.on('download-progress', (progress) => {
+    setUpdateState({
+      status: 'downloading',
+      error: '',
+      downloadProgress: {
+        percent: Number(progress.percent || 0),
+        transferred: Number(progress.transferred || 0),
+        total: Number(progress.total || 0),
+      },
+    })
+  })
+  autoUpdater.on('update-downloaded', (info) => {
+    setUpdateState({
+      status: 'downloaded',
+      updateInfo: serializeUpdateInfo(info),
+      error: '',
+      downloaded: true,
+      downloadProgress: null,
+    })
+  })
+  autoUpdater.on('error', (error) => {
+    setUpdateState({
+      status: 'error',
+      error: error instanceof Error ? error.message : String(error),
+      downloaded: false,
+      downloadProgress: null,
+    })
+  })
+}
+
+function assertPackagedUpdates() {
+  if (!app.isPackaged) return updateUnsupportedState()
+  return null
+}
+
+function isAllowedExternalUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl)
+    if (!['https:', 'http:'].includes(parsed.protocol)) return false
+    if (parsed.hostname === 'github.com' || parsed.hostname === 'www.github.com') return true
+    if (HOMEPAGE_URL) return parsed.hostname === new URL(HOMEPAGE_URL).hostname
+    return false
+  } catch {
+    return false
+  }
 }
 
 function setServerPort(port) {
@@ -363,15 +488,31 @@ function startBackend() {
   )
 
   startedBackend = true
-  backend.stdout.pipe(logStream)
-  backend.stderr.pipe(logStream)
+  let logClosed = false
+  const writeLog = (line) => {
+    if (logClosed || logStream.destroyed || logStream.writableEnded) return
+    logStream.write(line)
+  }
+  const closeLog = () => {
+    if (logClosed) return
+    logClosed = true
+    if (!logStream.destroyed && !logStream.writableEnded) logStream.end()
+  }
+  logStream.once('error', () => {
+    logClosed = true
+  })
+  backend.stdout.pipe(logStream, { end: false })
+  backend.stderr.pipe(logStream, { end: false })
   backend.once('error', (error) => {
     backendStartError = error
-    logStream.write(`[${new Date().toISOString()}] backend spawn error: ${error.message}\n`)
+    writeLog(`[${new Date().toISOString()}] backend spawn error: ${error.message}\n`)
   })
   backend.once('exit', (code, signal) => {
-    logStream.write(`[${new Date().toISOString()}] backend exited code=${code} signal=${signal}\n`)
-    logStream.end()
+    writeLog(`[${new Date().toISOString()}] backend exited code=${code} signal=${signal}\n`)
+  })
+  backend.once('close', (code, signal) => {
+    writeLog(`[${new Date().toISOString()}] backend closed code=${code} signal=${signal}\n`)
+    closeLog()
     backend = null
   })
 }
@@ -436,6 +577,13 @@ async function createWindow() {
     },
   })
 
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//.test(url)) {
+      shell.openExternal(url).catch(() => {})
+    }
+    return { action: 'deny' }
+  })
+
   await win.loadURL(RENDERER_URL || SERVER_URL)
 
   if (RENDERER_URL) {
@@ -455,7 +603,75 @@ function stopBrowserBridge() {
   browserBridgeUrl = ''
 }
 
+ipcMain.handle('app:get-info', () => ({
+  name: app.getName(),
+  version: app.getVersion(),
+  isPackaged: app.isPackaged,
+  platform: process.platform,
+  repoUrl: REPOSITORY_URL,
+  homepageUrl: HOMEPAGE_URL,
+}))
+
+ipcMain.handle('app:open-external', async (_event, rawUrl) => {
+  const url = String(rawUrl || '')
+  if (!isAllowedExternalUrl(url)) {
+    return { ok: false, error: 'External URL is not allowed.' }
+  }
+  await shell.openExternal(url)
+  return { ok: true }
+})
+
+ipcMain.handle('app:get-update-state', () => updateState)
+
+ipcMain.handle('app:check-for-updates', async () => {
+  const unsupported = assertPackagedUpdates()
+  if (unsupported) return unsupported
+  if (updateCheckInFlight) return updateCheckInFlight
+
+  updateCheckInFlight = autoUpdater.checkForUpdates()
+    .then(() => updateState)
+    .catch((error) => setUpdateState({
+      status: 'error',
+      error: error instanceof Error ? error.message : String(error),
+      downloaded: false,
+      downloadProgress: null,
+    }))
+    .finally(() => {
+      updateCheckInFlight = null
+    })
+  return updateCheckInFlight
+})
+
+ipcMain.handle('app:download-update', async () => {
+  const unsupported = assertPackagedUpdates()
+  if (unsupported) return unsupported
+  if (updateDownloadInFlight) return updateDownloadInFlight
+
+  setUpdateState({ status: 'downloading', error: '', downloadProgress: null })
+  updateDownloadInFlight = autoUpdater.downloadUpdate()
+    .then(() => updateState)
+    .catch((error) => setUpdateState({
+      status: 'error',
+      error: error instanceof Error ? error.message : String(error),
+      downloaded: false,
+      downloadProgress: null,
+    }))
+    .finally(() => {
+      updateDownloadInFlight = null
+    })
+  return updateDownloadInFlight
+})
+
+ipcMain.handle('app:install-update', () => {
+  if (!app.isPackaged || !updateState.downloaded) {
+    return { ok: false, error: 'No downloaded update is ready to install.' }
+  }
+  setImmediate(() => autoUpdater.quitAndInstall(false, true))
+  return { ok: true }
+})
+
 app.whenReady().then(() => {
+  configureAutoUpdater()
   if (process.platform === 'darwin' && APP_ICON_PATH && app.dock) {
     app.dock.setIcon(APP_ICON_PATH)
   }

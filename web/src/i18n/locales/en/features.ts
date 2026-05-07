@@ -27,6 +27,7 @@ const en: TranslationTree = {
     breadcrumbClarification: 'Clarification',
     breadcrumbExec: 'Execution',
     breadcrumbPlanning: 'Planning…',
+    tabCurrent: 'Current',
     tabResult: 'Result',
     tabFlow: 'Flow',
     sandboxCollapse: 'Hide sandbox dock',

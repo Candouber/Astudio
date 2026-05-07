@@ -36,6 +36,8 @@ const zh: TranslationTree = {
       '示例：从用户上传的 CSV 中统计字段覆盖率和异常值，输出 Markdown 报告，含前 10 个异常行。',
     generateBtn: '生成 Skill',
     loadingPool: '加载 Skill 池...',
+    expandCategory: '展开分类',
+    collapseCategory: '收起分类',
     toggleOn: '启用',
     toggleOff: '停用',
     noDesc: '（无描述）',

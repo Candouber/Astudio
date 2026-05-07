@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
-  AlertTriangle, Check, Code2, Download, Eye, FileCode2, Loader, Package, RefreshCw, RotateCcw, Search, Sparkles, Trash2, Wrench, X,
+  AlertTriangle, Check, ChevronRight, Code2, Download, Eye, FileCode2, Loader, Package, RefreshCw, RotateCcw, Search, Sparkles, Trash2, Wrench, X,
 } from 'lucide-react'
 import { api } from '../api/client'
 import type { BundleSkillConfig, SkillMdPayload, SkillPoolItem, SkillProbeResult } from '../types'
@@ -61,6 +61,7 @@ export default function SkillPool() {
   const [showAi, setShowAi] = useState(false)
   const [aiResultMsg, setAiResultMsg] = useState('')
   const [editingName, setEditingName] = useState<Record<string, string>>({})
+  const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({})
 
   // URL probe 实时预览（贴上去后 500ms 识别一次）
   const [probe, setProbe] = useState<SkillProbeResult | null>(null)
@@ -91,6 +92,16 @@ export default function SkillPool() {
   }
 
   useEffect(() => { load() }, [])
+
+  const groups = useMemo(() => {
+    const acc: Record<string, SkillPoolItem[]> = {}
+    for (const s of skills) {
+      const cat = s.category || t('skillPool.categoryGeneral')
+      acc[cat] = acc[cat] || []
+      acc[cat].push(s)
+    }
+    return acc
+  }, [skills, t])
 
   // URL 变化时 debounce 调 /skills/probe，用于在输入框下方展示识别结果
   useEffect(() => {
@@ -129,11 +140,20 @@ export default function SkillPool() {
   // 加载完成后，如 URL 带 highlight，滚动到对应卡片
   useEffect(() => {
     if (!highlightSlug || loading) return
-    const el = cardRefs.current[highlightSlug]
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    const highlightedCategory = Object.entries(groups).find(([, items]) =>
+      items.some(item => item.slug === highlightSlug),
+    )?.[0]
+    if (highlightedCategory) {
+      setExpandedCategories(prev => ({ ...prev, [highlightedCategory]: true }))
     }
-  }, [highlightSlug, loading, skills])
+    const timer = window.setTimeout(() => {
+      const el = cardRefs.current[highlightSlug]
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [groups, highlightSlug, loading])
 
   const handleRefreshBundle = async (skill: SkillPoolItem) => {
     setBusy(true)
@@ -160,16 +180,6 @@ export default function SkillPool() {
       setMdLoading(false)
     }
   }
-
-  const groups = useMemo(() => {
-    const acc: Record<string, SkillPoolItem[]> = {}
-    for (const s of skills) {
-      const cat = s.category || t('skillPool.categoryGeneral')
-      acc[cat] = acc[cat] || []
-      acc[cat].push(s)
-    }
-    return acc
-  }, [skills, t])
 
   const handleImport = async () => {
     if (!importDraft.url.trim()) return
@@ -264,6 +274,10 @@ export default function SkillPool() {
     } finally {
       setBusy(false)
     }
+  }
+
+  const toggleCategory = (category: string) => {
+    setExpandedCategories(prev => ({ ...prev, [category]: !prev[category] }))
   }
 
   return (
@@ -435,15 +449,28 @@ export default function SkillPool() {
         </div>
       ) : (
         <div className="skill-pool-groups">
-          {Object.entries(groups).map(([category, items]) => (
-            <section key={category} className="skill-pool-group">
-              <div className="skill-pool-group__title">
-                <Wrench size={16} />
-                <span>{category}</span>
-                <em>{items.length}</em>
-              </div>
-              <div className="skill-pool-list">
-                {items.map(skill => {
+          {Object.entries(groups).map(([category, items]) => {
+            const expanded = !!expandedCategories[category]
+            return (
+              <section
+                key={category}
+                className={`skill-pool-group ${expanded ? 'skill-pool-group--open' : ''}`}
+              >
+                <button
+                  type="button"
+                  className="skill-pool-group__title"
+                  onClick={() => toggleCategory(category)}
+                  aria-expanded={expanded}
+                  title={expanded ? t('skillPool.collapseCategory') : t('skillPool.expandCategory')}
+                >
+                  <ChevronRight size={16} className="skill-pool-group__chevron" />
+                  <Wrench size={16} />
+                  <span>{category}</span>
+                  <em>{items.length}</em>
+                </button>
+                {expanded && (
+                  <div className="skill-pool-list">
+                    {items.map(skill => {
                   const bundle = getBundleConfig(skill)
                   const label = kindLabel(skill, t)
                   const editing = skill.slug in editingName
@@ -545,10 +572,12 @@ export default function SkillPool() {
                       </div>
                     </article>
                   )
-                })}
-              </div>
-            </section>
-          ))}
+                    })}
+                  </div>
+                )}
+              </section>
+            )
+          })}
         </div>
       )}
 

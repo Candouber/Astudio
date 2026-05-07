@@ -181,6 +181,28 @@
   color: var(--accent-danger);
 }
 
+.model-capability-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--accent-warning-light);
+  border: 1px solid color-mix(in srgb, var(--accent-warning) 24%, transparent);
+  border-radius: 8px;
+  color: var(--accent-warning);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.model-capability-warning svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.model-capability-warning--routing {
+  margin-top: 12px;
+}
+
 .btn-delete {
   padding: 4px;
   color: var(--text-muted);

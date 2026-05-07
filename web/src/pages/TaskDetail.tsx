@@ -12,9 +12,9 @@ import { useI18n } from '../i18n/useI18n'
 import { ArrowLeft, Box, FileText, GitBranch, Loader, OctagonX, RefreshCw, RotateCcw } from 'lucide-react'
 import './TaskDetail.css'
 
-const TERMINAL = ['completed', 'completed_with_blockers', 'timeout_killed', 'failed']
+const TERMINAL = ['completed', 'completed_with_blockers', 'timeout_killed', 'failed', 'terminated']
 
-type ResultViewMode = 'result' | 'flow'
+type ResultViewMode = 'work' | 'result' | 'flow'
 
 export default function TaskDetail() {
   const { id: taskId } = useParams<{ id: string }>()
@@ -24,7 +24,7 @@ export default function TaskDetail() {
   const [showTerminateConfirm, setShowTerminateConfirm] = useState(false)
   const [rePlanning, setRePlanning] = useState(false)
   const [rerunning, setRerunning] = useState(false)
-  const [resultViewMode, setResultViewMode] = useState<ResultViewMode>('result')
+  const [resultViewMode, setResultViewMode] = useState<ResultViewMode>('work')
   const [sandboxDockOpen, setSandboxDockOpen] = useState(true)
 
   const currentTask = useTaskStore(s => s.currentTask)
@@ -56,6 +56,17 @@ export default function TaskDetail() {
       return () => ctrl.abort()
     }
   }, [currentTaskId, currentTaskStatus, taskId, isExecuting, setExecuting])
+
+  const loadedIsTerminal = currentTaskStatus ? TERMINAL.includes(currentTaskStatus) : false
+  const loadedHasResultSurface = nodes.some(node =>
+    node.status === 'completed' && Boolean((node.output || '').trim()),
+  )
+
+  useEffect(() => {
+    if (loadedIsTerminal && loadedHasResultSurface && resultViewMode === 'work') {
+      setResultViewMode('result')
+    }
+  }, [loadedHasResultSurface, loadedIsTerminal, resultViewMode])
 
   if (!currentTask) {
     return (
@@ -124,12 +135,25 @@ export default function TaskDetail() {
   }
 
   const isTerminal = TERMINAL.includes(status)
-  const showFlowInResult = isTerminal && resultViewMode === 'flow'
+  const hasResultSurface = nodes.some(node =>
+    node.status === 'completed' && Boolean((node.output || '').trim()),
+  )
+  const hasFlowSurface = nodes.length > 0
+  const hasWorkSurface = !isTerminal || status === 'terminated'
+  const effectiveViewMode: ResultViewMode =
+    resultViewMode === 'result' && hasResultSurface ? 'result'
+    : resultViewMode === 'flow' && hasFlowSurface ? 'flow'
+    : resultViewMode === 'work' && hasWorkSurface ? 'work'
+    : hasResultSurface ? 'result'
+    : hasFlowSurface ? 'flow'
+    : 'work'
 
   const breadcrumb =
-    status === 'terminated' ? t('taskDetail.breadcrumbTerminated')
+    effectiveViewMode === 'result' ? t('taskDetail.breadcrumbResult')
+    : effectiveViewMode === 'flow' ? t('taskDetail.breadcrumbResultFlow')
+    : status === 'terminated' ? t('taskDetail.breadcrumbTerminated')
     : status === 'failed' ? t('taskDetail.breadcrumbFailed')
-    : isTerminal ? (showFlowInResult ? t('taskDetail.breadcrumbResultFlow') : t('taskDetail.breadcrumbResult'))
+    : isTerminal ? t('taskDetail.breadcrumbResult')
     : status === 'await_leader_plan_approval' ? t('taskDetail.breadcrumbPlanApproval')
     : status === 'need_clarification' ? t('taskDetail.breadcrumbClarification')
     : status === 'executing' ? t('taskDetail.breadcrumbExec')
@@ -139,13 +163,12 @@ export default function TaskDetail() {
 
   const wrapperModifier = [
     'td--workspace',
-    status === 'terminated' ? ''
-    : showFlowInResult ? 'td--full'
-    : isTerminal ? 'td--result'
+    effectiveViewMode === 'result' ? 'td--result'
+    : effectiveViewMode === 'flow' ? 'td--full'
     : 'td--full',
   ].filter(Boolean).join(' ')
 
-  const taskSurface = status === 'terminated' ? (
+  const workSurface = status === 'terminated' ? (
     <TerminatedView
       planSteps={currentTask.plan_steps}
       nodes={nodes}
@@ -172,21 +195,29 @@ export default function TaskDetail() {
   ) : status === 'await_leader_plan_approval' ? (
     <PlanReview taskId={currentTask.id} question={question} />
   ) : isTerminal ? (
-    showFlowInResult ? (
-      <ExecMonitor />
-    ) : (
-      <ResultView
-        taskId={currentTask.id}
-        question={question}
-        status={status}
-        nodes={nodes}
-        studioId={currentTask.studio_id}
-        statusMessage={currentTask.status_message}
-      />
-    )
+    <ResultView
+      taskId={currentTask.id}
+      question={question}
+      status={status}
+      nodes={nodes}
+      studioId={currentTask.studio_id}
+      statusMessage={currentTask.status_message}
+    />
   ) : (
     <ExecMonitor />
   )
+  const taskSurface = effectiveViewMode === 'result' && hasResultSurface ? (
+    <ResultView
+      taskId={currentTask.id}
+      question={question}
+      status={status}
+      nodes={nodes}
+      studioId={currentTask.studio_id}
+      statusMessage={currentTask.status_message}
+    />
+  ) : effectiveViewMode === 'flow' && hasFlowSurface ? (
+    <ExecMonitor />
+  ) : workSurface
 
   const iterationLabel =
     `${t('taskDetail.iterationRound', { current: currentIterationIndex })}` +
@@ -202,26 +233,41 @@ export default function TaskDetail() {
         <span className="td__iteration-pill">
           {iterationLabel}
         </span>
-        {isTerminal && (
+        {(hasWorkSurface || hasResultSurface || hasFlowSurface) && (
           <div className="td__view-toggle" role="tablist" aria-label={t('taskDetail.viewToggleAria')}>
+            {hasWorkSurface && (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={effectiveViewMode === 'work'}
+                className={`td__view-toggle-btn ${effectiveViewMode === 'work' ? 'td__view-toggle-btn--active' : ''}`}
+                onClick={() => setResultViewMode('work')}
+              >
+                <FileText size={14} /> {t('taskDetail.tabCurrent')}
+              </button>
+            )}
+            {hasResultSurface && (
             <button
               type="button"
               role="tab"
-              aria-selected={resultViewMode === 'result'}
-              className={`td__view-toggle-btn ${resultViewMode === 'result' ? 'td__view-toggle-btn--active' : ''}`}
+              aria-selected={effectiveViewMode === 'result'}
+              className={`td__view-toggle-btn ${effectiveViewMode === 'result' ? 'td__view-toggle-btn--active' : ''}`}
               onClick={() => setResultViewMode('result')}
             >
               <FileText size={14} /> {t('taskDetail.tabResult')}
             </button>
+            )}
+            {hasFlowSurface && (
             <button
               type="button"
               role="tab"
-              aria-selected={resultViewMode === 'flow'}
-              className={`td__view-toggle-btn ${resultViewMode === 'flow' ? 'td__view-toggle-btn--active' : ''}`}
+              aria-selected={effectiveViewMode === 'flow'}
+              className={`td__view-toggle-btn ${effectiveViewMode === 'flow' ? 'td__view-toggle-btn--active' : ''}`}
               onClick={() => setResultViewMode('flow')}
             >
               <GitBranch size={14} /> {t('taskDetail.tabFlow')}
             </button>
+            )}
           </div>
         )}
         <div className="td__topbar-actions">

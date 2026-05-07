@@ -75,6 +75,9 @@ const en: TranslationTree = {
     thinkingBudget: 'Thinking budget (Anthropic)',
     thinkingBudgetPlaceholder: 'Empty = use default',
     customWarn: '⚠️ Manual value — not found among connected models.',
+    modelCapabilityWarn: 'This model has compatibility risks for forced tool-calling execution.',
+    executionModelWarn:
+      'This model is not a good worker agent: it may not support tool_choice or multi-step tool loops. Prefer a tool-compatible model such as deepseek-chat.',
     modalTitle: 'Settings',
     tabProviders: 'Model providers',
     tabRouting: 'Role routing',

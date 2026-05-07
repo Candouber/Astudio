@@ -35,6 +35,8 @@ const en: TranslationTree = {
       'Example: From uploaded CSV, report coverage and outliers in Markdown with top 10 rows.',
     generateBtn: 'Generate Skill',
     loadingPool: 'Loading Skill pool…',
+    expandCategory: 'Expand category',
+    collapseCategory: 'Collapse category',
     toggleOn: 'On',
     toggleOff: 'Off',
     noDesc: '(no description)',
