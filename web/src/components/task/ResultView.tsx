@@ -44,6 +44,7 @@ const USD_TO_CNY = 7.2
 const OUTPUT_NODE_PREFIX = '__output__:'
 const MAX_OUTPUT_SCAN_DEPTH = 4
 const MAX_OUTPUT_FILES = 80
+const STEP_OUTPUT_PREVIEW_LIMIT = 5000
 
 interface Props {
   taskId: string
@@ -477,6 +478,7 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
   const [annotations, setAnnotations] = useState<Annotation[]>([])
   const [notebookOpen, setNotebookOpen] = useState(true)
   const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null)
+  const [fullStepOutputIds, setFullStepOutputIds] = useState<Set<string>>(() => new Set())
   const [jumpTarget, setJumpTarget] = useState<{ annotationId: string; nodeId: string } | null>(null)
   const [chatOpen, setChatOpen] = useState(false)
   const [sandbox, setSandbox] = useState<Sandbox | null>(null)
@@ -660,6 +662,15 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
     requestAnimationFrame(() => {
       const nextTop = anchorEl.getBoundingClientRect().top
       scrollContainer.scrollTop = previousScrollTop + (nextTop - previousTop)
+    })
+  }, [])
+
+  const handleShowFullStepOutput = useCallback((nodeId: string) => {
+    setFullStepOutputIds(prev => {
+      if (prev.has(nodeId)) return prev
+      const next = new Set(prev)
+      next.add(nodeId)
+      return next
     })
   }, [])
 
@@ -1246,17 +1257,36 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
                             <CornerDownRight size={14} />
                             <span>{t('resultView.stepMaterials')}</span>
                           </div>
-                          {item.node.output ? (
-                            <HighlightedMarkdown
-                              content={item.node.output}
-                              nodeId={item.node.id}
-                              annotations={annotations.filter(annotation => annotation.node_id === item.node.id)}
-                              onHighlightClick={handleHighlightClick}
-                              className="result-step-note__content"
-                            />
-                          ) : (
-                            <p className="result-step-note__empty">{t('resultView.stepNoOutput')}</p>
-                          )}
+                          {(() => {
+                            const output = item.node.output || ''
+                            if (!output) return <p className="result-step-note__empty">{t('resultView.stepNoOutput')}</p>
+
+                            const isLong = output.length > STEP_OUTPUT_PREVIEW_LIMIT
+                            const shouldRenderFull = fullStepOutputIds.has(item.node.id) || !isLong
+                            const renderedOutput = shouldRenderFull
+                              ? output
+                              : `${output.slice(0, STEP_OUTPUT_PREVIEW_LIMIT).trimEnd()}\n\n…`
+
+                            return (
+                              <>
+                                {isLong && !shouldRenderFull && (
+                                  <div className="result-step-note__preview-note">
+                                    <span>{t('resultView.stepPreviewNotice')}</span>
+                                    <button type="button" onClick={() => handleShowFullStepOutput(item.node.id)}>
+                                      {t('resultView.showFullStepOutput')}
+                                    </button>
+                                  </div>
+                                )}
+                                <HighlightedMarkdown
+                                  content={renderedOutput}
+                                  nodeId={item.node.id}
+                                  annotations={annotations.filter(annotation => annotation.node_id === item.node.id)}
+                                  onHighlightClick={handleHighlightClick}
+                                  className="result-step-note__content"
+                                />
+                              </>
+                            )
+                          })()}
                         </div>
                       </div>
                     )}

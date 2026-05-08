@@ -58,7 +58,7 @@ export default function ExecMonitor() {
           agentRole: n.agent_role,
           stepLabel: n.step_label,
           status: n.status,
-          output: n.output,
+          output: n.status === 'running' ? (n.output || '').slice(-500) : '',
           trace: n.trace || [],
           iterationIndex: meta?.index,
           iterationTitle: meta?.title,

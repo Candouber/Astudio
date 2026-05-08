@@ -1,6 +1,6 @@
 import { useTaskStore } from '../../stores/taskStore'
 import { X, ChevronDown, ChevronUp, RotateCcw, Send, Loader, GitBranch } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { parseSSEStream } from '../../api/sse'
 import { connectTaskStream } from '../../api/sse'
 import { useI18n } from '../../i18n/useI18n'
@@ -17,6 +17,8 @@ const STATUS_KEYS: Record<string, string> = {
   blocked: 'subTaskPanel.statusBlocked',
   error: 'subTaskPanel.statusError',
 }
+
+const OUTPUT_PREVIEW_LIMIT = 2400
 
 function nodeStatusLabel(status: string, t: (path: string) => string) {
   const key = STATUS_KEYS[status]
@@ -46,11 +48,19 @@ export default function SubTaskPanel() {
   const [iterating, setIterating] = useState(false)
   const [iterateStatus, setIterateStatus] = useState('')
 
+  useEffect(() => {
+    setShowFullOutput(false)
+  }, [selectedNodeId])
+
   const node = nodes.find(n => n.id === selectedNodeId)
   if (!node) return null
 
   const streamContent = streamBuffers[node.id] || ''
   const displayOutput = node.output || streamContent
+  const isLongOutput = displayOutput.length > OUTPUT_PREVIEW_LIMIT
+  const renderedOutput = !showFullOutput && isLongOutput
+    ? `${displayOutput.slice(0, OUTPUT_PREVIEW_LIMIT).trimEnd()}\n\n…`
+    : displayOutput
   const isCompleted = node.status === 'completed'
   const isBlocked = node.status === 'error'
   const isSkipped = isBlocked && node.output?.startsWith('[SKIPPED]')
@@ -184,16 +194,21 @@ export default function SubTaskPanel() {
         <div className="subtask-panel__section">
           <div className="subtask-panel__section-header">
             <h4 className="subtask-panel__section-title">{t('subTaskPanel.outputTitle')}</h4>
-            {displayOutput.length > 300 && (
+            {isLongOutput && (
               <button type="button" className="btn btn-icon" onClick={() => setShowFullOutput(!showFullOutput)}>
                 {showFullOutput ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
               </button>
             )}
           </div>
-          <div className={`subtask-panel__content-box subtask-panel__output ${!showFullOutput && displayOutput.length > 300 ? 'subtask-panel__output--collapsed' : ''}`}>
-            {displayOutput}
+          <div className={`subtask-panel__content-box subtask-panel__output ${!showFullOutput && isLongOutput ? 'subtask-panel__output--collapsed' : ''}`}>
+            {renderedOutput}
             {node.status === 'running' && <span className="subtask-panel__cursor">▍</span>}
           </div>
+          {isLongOutput && !showFullOutput && (
+            <button type="button" className="subtask-panel__expand-output" onClick={() => setShowFullOutput(true)}>
+              {t('subTaskPanel.showFullOutput')}
+            </button>
+          )}
         </div>
       )}
 

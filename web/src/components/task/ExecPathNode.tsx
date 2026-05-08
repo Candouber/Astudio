@@ -33,7 +33,6 @@ function formatElapsed(ms: number): string {
 function ExecPathNode({ data }: NodeProps) {
   const { t } = useI18n()
   const d = data as unknown as PathNodeData
-  const selectNode = useTaskStore(s => s.selectNode)
   const streamBuffers = useTaskStore(s => s.streamBuffers)
   const activity = useTaskStore(s => s.nodeActivity[d.nodeId])
   const streamContent = streamBuffers[d.nodeId] || ''
@@ -64,7 +63,6 @@ function ExecPathNode({ data }: NodeProps) {
   return (
     <div
       className={`exec-node exec-node--${d.status} ${isStale ? 'exec-node--stale' : ''}`}
-      onClick={() => selectNode(d.nodeId)}
     >
       <Handle type="target" position={Position.Top} className="exec-node__handle" />
 

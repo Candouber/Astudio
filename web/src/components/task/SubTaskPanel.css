@@ -66,6 +66,21 @@
   -webkit-mask-image: linear-gradient(to bottom, black 70%, transparent);
 }
 
+.subtask-panel__expand-output {
+  align-self: flex-start;
+  border: 0;
+  background: transparent;
+  color: var(--accent-brand);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.subtask-panel__expand-output:hover {
+  text-decoration: underline;
+}
+
 .subtask-panel__cursor {
   color: var(--accent-brand);
   animation: pulse 1s ease-in-out infinite;
