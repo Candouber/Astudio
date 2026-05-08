@@ -24,8 +24,18 @@ interface StatusMeta {
 
 const STATUS_META: Record<string, Omit<StatusMeta, 'fallbackRaw'>> = {
   routing:                     { labelKey: 'chatHome.status.routing',                     icon: Compass,      tone: 'progress', inProgress: true },
+  created:                     { labelKey: 'chatHome.status.created',                     icon: Loader,       tone: 'progress', inProgress: true },
   matched:                     { labelKey: 'chatHome.status.matched',                     icon: CheckCircle2, tone: 'progress', inProgress: true },
   hr_studio:                   { labelKey: 'chatHome.status.hr_studio',                  icon: Sparkles,     tone: 'progress', inProgress: true },
+  direct_answering:            { labelKey: 'chatHome.status.direct_answering',            icon: Bot,          tone: 'progress', inProgress: true },
+  creating_studio:             { labelKey: 'chatHome.status.creating_studio',             icon: Sparkles,     tone: 'progress', inProgress: true },
+  studio_selected:             { labelKey: 'chatHome.status.studio_selected',             icon: Building2,    tone: 'progress', inProgress: true },
+  leader_planning:             { labelKey: 'chatHome.status.leader_planning',             icon: Brain,        tone: 'progress', inProgress: true },
+  leader_replanning:           { labelKey: 'chatHome.status.leader_replanning',           icon: Brain,        tone: 'progress', inProgress: true },
+  recruiting:                  { labelKey: 'chatHome.status.recruiting',                  icon: Sparkles,     tone: 'progress', inProgress: true },
+  plan_validating:             { labelKey: 'chatHome.status.plan_validating',             icon: ClipboardList, tone: 'progress', inProgress: true },
+  plan_ready:                  { labelKey: 'chatHome.status.plan_ready',                  icon: ClipboardCheck, tone: 'warn' },
+  clarification_ready:         { labelKey: 'chatHome.status.clarification_ready',         icon: HelpCircle,   tone: 'warn' },
   planning:                    { labelKey: 'chatHome.status.planning',                     icon: Brain,        tone: 'progress', inProgress: true },
   need_clarification:          { labelKey: 'chatHome.status.need_clarification',          icon: HelpCircle,   tone: 'warn' },
   await_leader_plan_approval:  { labelKey: 'chatHome.status.await_leader_plan_approval', icon: ClipboardCheck, tone: 'warn' },
@@ -317,7 +327,7 @@ function TaskStatusCard({
   navigate: ReturnType<typeof useNavigate>
   t: (key: string) => string
 }) {
-  const meta = getStatusMeta(msg.taskStatus)
+  const meta = getStatusMeta(msg.taskPhase || msg.taskStatus)
   const Icon = meta.icon
   const label = statusLabel(meta, t)
   return (

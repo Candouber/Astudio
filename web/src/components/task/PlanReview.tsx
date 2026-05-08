@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTaskStore } from '../../stores/taskStore'
 import { api } from '../../api/client'
 import { connectTaskStream } from '../../api/sse'
@@ -21,13 +21,30 @@ export default function PlanReview({ taskId, question }: Props) {
   const clearPlan = useTaskStore(s => s.clearPlan)
   const setExecuting = useTaskStore(s => s.setExecuting)
   const updateTaskStatus = useTaskStore(s => s.updateTaskStatus)
+  const fetchTask = useTaskStore(s => s.fetchTask)
 
   const [rejecting, setRejecting] = useState(false)
   const [feedback, setFeedback] = useState('')
   const [loading, setLoading] = useState(false)
+  const [refreshedMissingPlan, setRefreshedMissingPlan] = useState(false)
   const persistedSteps = currentTask?.plan_steps || []
   const effectivePlanSteps = planSteps.length > 0 ? planSteps : persistedSteps
   const effectiveStudioId = planStudioId || currentTask?.plan_studio_id || currentTask?.studio_id || ''
+
+  useEffect(() => {
+    setRefreshedMissingPlan(false)
+  }, [taskId])
+
+  useEffect(() => {
+    if (!currentTask || effectivePlanSteps.length > 0 || refreshedMissingPlan) return
+    let cancelled = false
+    fetchTask(taskId).finally(() => {
+      if (!cancelled) setRefreshedMissingPlan(true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [currentTask, effectivePlanSteps.length, fetchTask, refreshedMissingPlan, taskId])
 
   const handleApprove = async () => {
     setLoading(true)
@@ -97,6 +114,14 @@ export default function PlanReview({ taskId, question }: Props) {
   }
 
   if (effectivePlanSteps.length === 0) {
+    if (!refreshedMissingPlan) {
+      return (
+        <div className="plan-review plan-review--loading">
+          <Loader size={24} className="animate-pulse" />
+          <p>{t('planReview.loadingPlan')}</p>
+        </div>
+      )
+    }
     // currentTask 已加载，但 plan_steps 在 DB 中也是空（旧任务或方案数据丢失）
     if (currentTask) {
       return (

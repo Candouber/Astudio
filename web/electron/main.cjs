@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron')
+const { app, BrowserWindow, dialog, ipcMain, powerMonitor, powerSaveBlocker, shell } = require('electron')
 const { autoUpdater } = require('electron-updater')
 const { spawn } = require('node:child_process')
 const crypto = require('node:crypto')
@@ -18,6 +18,13 @@ const USER_DATA_DIR = app.getPath('userData')
 const DATA_DIR = process.env.ASTUDIO_DATA_DIR || path.join(USER_DATA_DIR, 'data')
 const REPOSITORY_URL = 'https://github.com/Candouber/Astudio'
 const HOMEPAGE_URL = ''
+const ACTIVE_TASK_STATUSES = new Set(['planning', 'executing'])
+const POWER_BLOCKER_POLL_MS = 5000
+const POWER_BLOCKER_TYPE =
+  process.env.ASTUDIO_POWER_SAVE_BLOCKER === 'prevent-app-suspension'
+    ? 'prevent-app-suspension'
+    : 'prevent-display-sleep'
+const POWER_BLOCKER_DISABLED = process.env.ASTUDIO_DISABLE_POWER_SAVE_BLOCKER === '1'
 
 autoUpdater.autoDownload = false
 autoUpdater.autoInstallOnAppQuit = false
@@ -41,6 +48,10 @@ let browserBridgeQueue = Promise.resolve()
 let updaterConfigured = false
 let updateCheckInFlight = null
 let updateDownloadInFlight = null
+let taskPowerBlockerId = null
+let taskPowerBlockerTimer = null
+let taskPowerBlockerInFlight = false
+let taskPowerBlockerActiveCount = 0
 let updateState = {
   status: 'idle',
   updateInfo: null,
@@ -52,6 +63,16 @@ let updateState = {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function writeDesktopLog(line) {
+  try {
+    const logDir = path.join(USER_DATA_DIR, 'logs')
+    fs.mkdirSync(logDir, { recursive: true })
+    fs.appendFileSync(path.join(logDir, 'desktop.log'), line)
+  } catch {
+    // Logging must never affect the desktop runtime.
+  }
 }
 
 function serializeUpdateInfo(info) {
@@ -405,6 +426,83 @@ async function waitForUrl(url, timeoutMs = 30000) {
   return false
 }
 
+async function fetchActiveTaskCount() {
+  const response = await fetch(`${SERVER_URL}/api/tasks/`, {
+    signal: AbortSignal.timeout(3000),
+  })
+  if (!response.ok) {
+    throw new Error(`Task list request failed: HTTP ${response.status}`)
+  }
+  const tasks = await response.json()
+  if (!Array.isArray(tasks)) return 0
+  return tasks.filter((task) => ACTIVE_TASK_STATUSES.has(task && task.status)).length
+}
+
+function enableTaskPowerBlocker(activeCount) {
+  taskPowerBlockerActiveCount = activeCount
+  if (POWER_BLOCKER_DISABLED) return
+  if (taskPowerBlockerId !== null && powerSaveBlocker.isStarted(taskPowerBlockerId)) return
+
+  taskPowerBlockerId = powerSaveBlocker.start(POWER_BLOCKER_TYPE)
+  writeDesktopLog(
+    `[${new Date().toISOString()}] power blocker started id=${taskPowerBlockerId} type=${POWER_BLOCKER_TYPE} active_tasks=${activeCount}\n`,
+  )
+}
+
+function disableTaskPowerBlocker(reason = 'no active tasks') {
+  taskPowerBlockerActiveCount = 0
+  if (taskPowerBlockerId === null) return
+
+  const id = taskPowerBlockerId
+  taskPowerBlockerId = null
+  if (powerSaveBlocker.isStarted(id)) {
+    powerSaveBlocker.stop(id)
+  }
+  writeDesktopLog(`[${new Date().toISOString()}] power blocker stopped id=${id} reason=${reason}\n`)
+}
+
+async function refreshTaskPowerBlocker() {
+  if (taskPowerBlockerInFlight) return
+  taskPowerBlockerInFlight = true
+  try {
+    const activeCount = await fetchActiveTaskCount()
+    if (activeCount > 0) {
+      enableTaskPowerBlocker(activeCount)
+    } else {
+      disableTaskPowerBlocker()
+    }
+  } catch (error) {
+    writeDesktopLog(
+      `[${new Date().toISOString()}] power blocker refresh failed: ${
+        error instanceof Error ? error.message : String(error)
+      }\n`,
+    )
+  } finally {
+    taskPowerBlockerInFlight = false
+  }
+}
+
+function startTaskPowerWatcher() {
+  if (taskPowerBlockerTimer) return
+  if (POWER_BLOCKER_DISABLED) {
+    writeDesktopLog(`[${new Date().toISOString()}] power blocker disabled by ASTUDIO_DISABLE_POWER_SAVE_BLOCKER=1\n`)
+    return
+  }
+  refreshTaskPowerBlocker().catch(() => {})
+  taskPowerBlockerTimer = setInterval(() => {
+    refreshTaskPowerBlocker().catch(() => {})
+  }, POWER_BLOCKER_POLL_MS)
+  taskPowerBlockerTimer.unref?.()
+}
+
+function stopTaskPowerWatcher() {
+  if (taskPowerBlockerTimer) {
+    clearInterval(taskPowerBlockerTimer)
+    taskPowerBlockerTimer = null
+  }
+  disableTaskPowerBlocker('app shutting down')
+}
+
 function resolveServerDir() {
   const candidates = [
     path.resolve(__dirname, '../../server'),
@@ -554,6 +652,7 @@ async function ensureBackend() {
 
 async function createWindow() {
   await ensureBackend()
+  startTaskPowerWatcher()
 
   if (RENDERER_URL) {
     await waitForUrl(RENDERER_URL)
@@ -682,8 +781,20 @@ app.whenReady().then(() => {
 })
 
 app.on('before-quit', () => {
+  stopTaskPowerWatcher()
   stopBackend()
   stopBrowserBridge()
+})
+
+powerMonitor.on('suspend', () => {
+  writeDesktopLog(
+    `[${new Date().toISOString()}] system suspend active_tasks=${taskPowerBlockerActiveCount} blocker_id=${taskPowerBlockerId ?? ''}\n`,
+  )
+})
+
+powerMonitor.on('resume', () => {
+  writeDesktopLog(`[${new Date().toISOString()}] system resume\n`)
+  refreshTaskPowerBlocker().catch(() => {})
 })
 
 app.on('window-all-closed', () => {

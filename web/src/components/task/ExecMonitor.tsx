@@ -28,6 +28,7 @@ export default function ExecMonitor() {
   const selectedNodeId = useTaskStore(s => s.selectedNodeId)
   const statusMessage = useTaskStore(s => s.statusMessage)
   const currentTask = useTaskStore(s => s.currentTask)
+  const phase = currentTask?.phase || 'created'
 
   const agentNodes = nodes.filter(n => n.type === 'sub_agent')
   const completed = agentNodes.filter(n => n.status === 'completed').length
@@ -99,6 +100,7 @@ export default function ExecMonitor() {
 
       <div className="exec-monitor__progress card">
         <span className="exec-monitor__progress-label">{t('execMonitor.progress')}</span>
+        <span className="exec-monitor__phase">{t(`taskPhase.${phase}`)}</span>
         <ProgressBar completed={completed} total={agentNodes.length} />
       </div>
 

@@ -12,10 +12,12 @@ function syncChatTaskStatus(
   taskId: string,
   status: TaskStatus,
   statusMessage?: string | null,
+  phase?: string | null,
 ) {
   const isActive = ACTIVE_TASK_STATUSES.has(status)
   useChatStore.getState().updateTaskMessage(taskId, {
     taskStatus: status,
+    taskPhase: phase || undefined,
     isStreaming: isActive,
     thinkingText: isActive ? (statusMessage || '') : '',
   })
@@ -122,6 +124,7 @@ interface TaskState {
   markHeartbeat: (tsMs: number) => void
   setExecuting: (executing: boolean) => void
   setStatus: (message: string) => void
+  setPhase: (phase: string) => void
   setPlanSteps: (steps: PlanStep[], studioId: string) => void
   setAnnotation: (stepId: string, text: string) => void
   clearPlan: () => void
@@ -180,7 +183,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     const previousTask = get().currentTask
     const isActive = task.status === 'planning' || task.status === 'executing'
     const rebuiltActivity = buildNodeActivityFromTask(task)
-    syncChatTaskStatus(task.id, task.status, task.status_message)
+    syncChatTaskStatus(task.id, task.status, task.status_message, task.phase)
     notifyTaskStatusChange(previousTask, task)
     set({
       currentTask: task,
@@ -206,7 +209,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         task.status === 'need_clarification' &&
         (task.clarification_questions?.length ?? 0) > 0
       const rebuiltActivity = buildNodeActivityFromTask(task)
-      syncChatTaskStatus(task.id, task.status, task.status_message)
+      syncChatTaskStatus(task.id, task.status, task.status_message, task.phase)
       notifyTaskStatusChange(previousTask, task)
       set({
         currentTask: task,
@@ -245,6 +248,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
             clarification_questions: [],
             clarification_answers: {},
             status: 'failed',
+            phase: 'failed',
             created_at: new Date().toISOString(),
           } as Task,
         })
@@ -254,7 +258,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   updateTaskStatus: (status) => {
     const task = get().currentTask
-    if (task) syncChatTaskStatus(task.id, status, task.status_message)
+    if (task) syncChatTaskStatus(task.id, status, task.status_message, task.phase)
     if (task) notifyTaskStatusChange(task, { ...task, status })
     set((state) => {
       const isActive = status === 'planning' || status === 'executing'
@@ -318,7 +322,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   setExecuting: (executing) => set({ isExecuting: executing }),
   setStatus: (message) => {
     const task = get().currentTask
-    if (task) syncChatTaskStatus(task.id, task.status, message)
+    if (task) syncChatTaskStatus(task.id, task.status, message, task.phase)
     set((state) => ({
       statusMessage: message,
       currentTask: state.currentTask
@@ -326,6 +330,12 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         : null,
     }))
   },
+
+  setPhase: (phase) => set((state) => ({
+    currentTask: state.currentTask
+      ? { ...state.currentTask, phase }
+      : null,
+  })),
 
   setPlanSteps: (steps, studioId) => set({
     planSteps: steps,

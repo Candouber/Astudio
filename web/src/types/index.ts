@@ -124,6 +124,7 @@ export interface Task {
   clarification_questions: ClarificationQuestion[];
   clarification_answers: Record<string, string>;
   status: TaskStatus;
+  phase?: string;
   /** 与 status 正交的进展文案，来自后端轮询/列表 */
   status_message?: string;
   created_at: string;
@@ -142,6 +143,7 @@ export interface TaskIteration {
   title: string;
   instruction: string;
   status: TaskStatus;
+  phase?: string;
   plan_steps: PlanStep[];
   plan_studio_id?: string | null;
   summary?: string;

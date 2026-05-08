@@ -58,6 +58,7 @@ const zh: TranslationTree = {
     noData: '需求确认数据不存在，请重新提问。',
     defaultAnswer: '还没想好',
     submitting: '正在提交并重新规划...',
+    needMoreInfo: 'Leader 仍需要更多信息，请继续补充后再提交。',
     emptyPlan: 'Leader 返回了空方案，请重试或重新描述需求。',
     submitFailed: '提交失败，请重试。',
     title: '需求确认',

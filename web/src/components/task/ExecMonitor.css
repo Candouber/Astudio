@@ -22,6 +22,21 @@
   white-space: nowrap;
 }
 
+.exec-monitor__phase {
+  flex: 0 0 auto;
+  max-width: 220px;
+  padding: 4px 9px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  color: var(--accent-brand);
+  background: var(--accent-brand-light);
+  font-size: 0.76rem;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .exec-monitor__body {
   flex: 1;
   display: flex;

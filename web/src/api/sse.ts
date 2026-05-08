@@ -6,15 +6,26 @@ import { api } from './client'
 import type { PlanStep, ClarificationQuestion, PathNode } from '../types'
 
 const ACTIVE_TASK_STATUSES = new Set(['planning', 'executing'])
+const WAITING_OR_TERMINAL_TASK_STATUSES = new Set([
+  'need_clarification',
+  'await_leader_plan_approval',
+  'completed',
+  'completed_with_blockers',
+  'timeout_killed',
+  'terminated',
+  'failed',
+])
 
 function updateChatTaskFromStream(
   taskId: string,
   status: string,
   message?: string,
   studio?: { id?: string; scenario?: string },
+  phase?: string,
 ) {
   const patch: Partial<ChatMessage> = {
     taskStatus: status,
+    taskPhase: phase || undefined,
     isStreaming: ACTIVE_TASK_STATUSES.has(status),
     thinkingText: ACTIVE_TASK_STATUSES.has(status) ? (message || '') : '',
   }
@@ -125,6 +136,7 @@ export function startChatStream(question: string, files: File[] = []): AbortCont
       clarification_questions: [],
       clarification_answers: {},
       status: 'planning',
+      phase: 'created',
       created_at: new Date().toISOString(),
     })
 
@@ -191,14 +203,35 @@ function handleAskStreamEvent(
           taskStore.setStatus(message)
         }
         if (data.task_id) {
+          if (data.status === 'need_clarification' && Array.isArray(data.questions)) {
+            useTaskStore.getState().setClarificationQuestions(
+              (data.task_id as string) || taskId,
+              data.questions as ClarificationQuestion[],
+              (data.studio_id as string) || '',
+            )
+          } else if (data.status === 'await_leader_plan_approval' && Array.isArray(data.steps)) {
+            useTaskStore.getState().setPlanSteps(
+              data.steps as PlanStep[],
+              (data.studio_id as string) || '',
+            )
+          }
           const patch: Partial<ChatMessage> = {
             taskId: data.task_id as string,
             taskStatus: (data.status as string) || 'planning',
+            taskPhase: (data.phase as string) || undefined,
+          }
+          if (WAITING_OR_TERMINAL_TASK_STATUSES.has(patch.taskStatus || '')) {
+            patch.isStreaming = false
+            patch.thinkingText = ''
           }
           if (data.studio_id) patch.studioId = data.studio_id as string
           if (data.studio_scenario) patch.studioName = data.studio_scenario as string
           chat.updateMessage(msgId, patch)
+          if (WAITING_OR_TERMINAL_TASK_STATUSES.has(patch.taskStatus || '')) {
+            chat.setStreaming(false)
+          }
           taskStore.updateTaskStatus((data.status as never) || 'planning')
+          if (data.phase) taskStore.setPhase(data.phase as string)
         }
         break
       }
@@ -301,6 +334,7 @@ function handleStreamEvent(event: string, rawData: string, taskId: string) {
   try {
     const data = JSON.parse(rawData) as {
       status?: string
+      phase?: string
       task_id?: string
       message?: string
       action?: string
@@ -313,11 +347,21 @@ function handleStreamEvent(event: string, rawData: string, taskId: string) {
     switch (event) {
       case 'status':
         if (data.status) {
+          if (data.status === 'need_clarification' && Array.isArray(data.questions)) {
+            store.setClarificationQuestions(
+              taskId,
+              data.questions as never[],
+              data.studio_id || '',
+            )
+          } else if (data.status === 'await_leader_plan_approval' && Array.isArray(data.steps)) {
+            store.setPlanSteps(data.steps as never[], data.studio_id || '')
+          }
           updateChatTaskFromStream(taskId, data.status, data.message, {
             id: data.studio_id,
             scenario: data.studio_scenario,
-          })
+          }, data.phase)
           store.updateTaskStatus(data.status as never)
+          if (data.phase) store.setPhase(data.phase)
         } else if (data.message) {
           useChatStore.getState().updateTaskMessage(taskId, { thinkingText: data.message })
         }
@@ -373,14 +417,14 @@ function handleStreamEvent(event: string, rawData: string, taskId: string) {
           updateChatTaskFromStream(taskId, 'need_clarification', '', {
             id: data.studio_id,
             scenario: data.studio_scenario,
-          })
+          }, 'clarification_ready')
           store.updateTaskStatus('need_clarification' as never)
         } else if (data.action === 'review_plan' && data.steps) {
           store.setPlanSteps(data.steps as never[], data.studio_id || '')
           updateChatTaskFromStream(taskId, 'await_leader_plan_approval', '', {
             id: data.studio_id,
             scenario: data.studio_scenario,
-          })
+          }, 'plan_ready')
           store.updateTaskStatus('await_leader_plan_approval' as never)
         }
         void store.fetchTask(taskId)

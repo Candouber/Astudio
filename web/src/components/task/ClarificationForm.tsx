@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTaskStore } from '../../stores/taskStore'
 import { parseSSEStream } from '../../api/sse'
 import { useI18n } from '../../i18n/useI18n'
@@ -17,11 +17,16 @@ export default function ClarificationForm({ taskId, question }: Props) {
   const currentTask = useTaskStore(s => s.currentTask)
   const clearClarification = useTaskStore(s => s.clearClarification)
   const setPlanSteps = useTaskStore(s => s.setPlanSteps)
+  const setClarificationQuestions = useTaskStore(s => s.setClarificationQuestions)
   const updateTaskStatus = useTaskStore(s => s.updateTaskStatus)
 
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
   const [statusText, setStatusText] = useState('')
+
+  useEffect(() => {
+    setAnswers(currentTask?.clarification_answers || {})
+  }, [taskId, currentTask?.clarification_answers])
 
   const questions =
     clarificationQuestions.length > 0
@@ -62,16 +67,29 @@ export default function ClarificationForm({ taskId, question }: Props) {
                 updateTaskStatus(data.status)
               }
             }
-            if (event === 'done_pause' && data.action === 'review_plan') {
-              const steps = (data.steps || []) as never[]
-              if (steps.length === 0) {
-                setStatusText(t('clarification.emptyPlan'))
+            if (event === 'done_pause') {
+              if (data.action === 'need_clarification') {
+                setClarificationQuestions(
+                  taskId,
+                  data.questions || [],
+                  data.studio_id || clarificationStudioId,
+                )
+                updateTaskStatus('need_clarification')
+                setAnswers({})
+                setStatusText(t('clarification.needMoreInfo'))
                 return
               }
-              setPlanSteps(steps, clarificationStudioId)
-              clearClarification()
-              updateTaskStatus('await_leader_plan_approval')
-              setStatusText('')
+              if (data.action === 'review_plan') {
+                const steps = (data.steps || []) as never[]
+                if (steps.length === 0) {
+                  setStatusText(t('clarification.emptyPlan'))
+                  return
+                }
+                setPlanSteps(steps, clarificationStudioId)
+                clearClarification()
+                updateTaskStatus('await_leader_plan_approval')
+                setStatusText('')
+              }
             }
           } catch { /* ignore */ }
         },

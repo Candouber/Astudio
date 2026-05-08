@@ -84,6 +84,8 @@ class Task(BaseModel):
     failure_reason: str = ""
     # 人可读进展文案（如「0 号正在评估…」）；与 status 正交，供轮询 /stream 与列表展示
     status_message: str = ""
+    # Fine-grained process phase, orthogonal to status.
+    phase: str = "created"
 
 
 class TaskIteration(BaseModel):
@@ -112,6 +114,7 @@ class TaskIteration(BaseModel):
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     summary: str = ""
+    phase: str = "created"
 
 
 class AskRequest(BaseModel):

@@ -140,6 +140,15 @@ class TaskStore:
                 plan_steps = json.loads(task_data.get("plan_steps") or "[]")
             except Exception:
                 plan_steps = []
+            plan_studio_id = task_data.get("plan_studio_id")
+            if not plan_steps and current_iteration_id:
+                current_iteration = next(
+                    (iteration for iteration in iterations if iteration.id == current_iteration_id),
+                    None,
+                )
+                if current_iteration and current_iteration.plan_steps:
+                    plan_steps = current_iteration.plan_steps
+                    plan_studio_id = plan_studio_id or current_iteration.plan_studio_id
 
             try:
                 clarification_questions = json.loads(task_data.get("clarification_questions") or "[]")
@@ -164,7 +173,7 @@ class TaskStore:
                 sub_tasks=sub_tasks,
                 iterations=iterations,
                 plan_steps=plan_steps,
-                plan_studio_id=task_data.get("plan_studio_id"),
+                plan_studio_id=plan_studio_id,
                 clarification_questions=clarification_questions,
                 clarification_answers=clarification_answers,
                 created_at=task_data.get("created_at", datetime.now()),
@@ -174,6 +183,7 @@ class TaskStore:
                 completed_at=task_data.get("completed_at"),
                 failure_reason=(task_data.get("failure_reason") or "") or "",
                 status_message=(task_data.get("status_message") or "") or "",
+                phase=task_data.get("phase") or "created",
             )
         finally:
             await db.close()
@@ -226,8 +236,8 @@ class TaskStore:
             await db.execute(
                 """INSERT INTO task_iterations
                    (id, task_id, parent_iteration_id, source_node_id, title, instruction,
-                    status, created_at, updated_at, started_at)
-                   VALUES (?, ?, ?, ?, ?, ?, 'planning', ?, ?, ?)""",
+                    status, phase, created_at, updated_at, started_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 'planning', 'created', ?, ?, ?)""",
                 (
                     iteration_id,
                     task_id,
@@ -376,18 +386,18 @@ class TaskStore:
             await db.execute(
                 """INSERT INTO tasks
                    (id, current_iteration_id, sandbox_owner_type, sandbox_owner_id, studio_id,
-                    question, status, created_at, updated_at, last_activity_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    question, status, phase, created_at, updated_at, last_activity_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     task_id, f"it_{task_id}_0", owner_type, owner_id, studio_id,
-                    question, "planning",
+                    question, "planning", "created",
                     now.isoformat(), now.isoformat(), now.isoformat(),
                 )
             )
             await db.execute(
                 """INSERT INTO task_iterations
-                   (id, task_id, title, instruction, status, created_at, updated_at, started_at)
-                   VALUES (?, ?, ?, ?, 'planning', ?, ?, ?)""",
+                   (id, task_id, title, instruction, status, phase, created_at, updated_at, started_at)
+                   VALUES (?, ?, ?, ?, 'planning', 'created', ?, ?, ?)""",
                 (
                     f"it_{task_id}_0", task_id, "初始执行", question[:1000],
                     now.isoformat(), now.isoformat(), now.isoformat(),
@@ -405,6 +415,7 @@ class TaskStore:
             studio_id=studio_id,
             question=question,
             status="planning",
+            phase="created",
             created_at=now,
             updated_at=now,
             last_activity_at=now,
@@ -495,9 +506,22 @@ class TaskStore:
                 "completed", "completed_with_blockers", "timeout_killed", "terminated", "failed",
             }
             active_statuses = {"planning", "executing"}
+            status_phase = {
+                "need_clarification": "clarification_ready",
+                "await_leader_plan_approval": "plan_ready",
+                "executing": "executing",
+                "terminated": "terminated",
+                "completed": "completed",
+                "completed_with_blockers": "completed_with_blockers",
+                "timeout_killed": "timeout_killed",
+                "failed": "failed",
+            }
 
             updates = ["status = ?", "updated_at = ?"]
             params: list = [status, now]
+            if status in status_phase:
+                updates.append("phase = ?")
+                params.append(status_phase[status])
 
             if status in active_statuses:
                 updates.append("started_at = COALESCE(started_at, ?)")
@@ -519,6 +543,9 @@ class TaskStore:
             )
             iter_updates = ["status = ?", "updated_at = ?"]
             iter_params: list = [status, now]
+            if status in status_phase:
+                iter_updates.append("phase = ?")
+                iter_params.append(status_phase[status])
             if status in active_statuses:
                 iter_updates.append("started_at = COALESCE(started_at, ?)")
                 iter_params.append(now)
@@ -551,16 +578,16 @@ class TaskStore:
             now = datetime.now().isoformat()
             await db.execute(
                 """UPDATE tasks
-                   SET status = ?, failure_reason = ?, status_message = ?,
+                   SET status = ?, phase = ?, failure_reason = ?, status_message = ?,
                        updated_at = ?, last_activity_at = ?, completed_at = ?
                    WHERE id = ?""",
-                (status, reason, reason, now, now, now, task_id),
+                (status, status, reason, reason, now, now, now, task_id),
             )
             await db.execute(
                 """UPDATE task_iterations
-                   SET status=?, summary=?, updated_at=?, completed_at=?
+                   SET status=?, phase=?, summary=?, updated_at=?, completed_at=?
                    WHERE id=(SELECT current_iteration_id FROM tasks WHERE id=?)""",
-                (status, reason, now, now, task_id),
+                (status, status, reason, now, now, task_id),
             )
             await self._close_active_execution_records_with_db(db, task_id, reason)
             await db.commit()
@@ -608,6 +635,39 @@ class TaskStore:
                 "UPDATE tasks SET status_message = ?, updated_at = ?, last_activity_at = ? WHERE id = ?",
                 (message, now, now, task_id),
             )
+            await db.commit()
+        finally:
+            await db.close()
+
+    async def set_phase(self, task_id: str, phase: str, status_message: Optional[str] = None) -> None:
+        """Update the fine-grained task phase without changing the public status."""
+        db = await get_db()
+        try:
+            now = datetime.now().isoformat()
+            if status_message is None:
+                await db.execute(
+                    "UPDATE tasks SET phase = ?, updated_at = ?, last_activity_at = ? WHERE id = ?",
+                    (phase, now, now, task_id),
+                )
+                await db.execute(
+                    """UPDATE task_iterations
+                       SET phase = ?, updated_at = ?
+                       WHERE id=(SELECT current_iteration_id FROM tasks WHERE id=?)""",
+                    (phase, now, task_id),
+                )
+            else:
+                await db.execute(
+                    """UPDATE tasks
+                       SET phase = ?, status_message = ?, updated_at = ?, last_activity_at = ?
+                       WHERE id = ?""",
+                    (phase, status_message, now, now, task_id),
+                )
+                await db.execute(
+                    """UPDATE task_iterations
+                       SET phase = ?, updated_at = ?
+                       WHERE id=(SELECT current_iteration_id FROM tasks WHERE id=?)""",
+                    (phase, now, task_id),
+                )
             await db.commit()
         finally:
             await db.close()
@@ -683,6 +743,7 @@ class TaskStore:
             studio_id=row.get("studio_id"),
             question=row["question"],
             status=cls._coerce_status(row.get("status")),
+            phase=row.get("phase") or "created",
             created_at=row.get("created_at", datetime.now()),
             updated_at=row.get("updated_at", datetime.now()),
             started_at=row.get("started_at"),
@@ -706,6 +767,7 @@ class TaskStore:
             title=row.get("title") or "",
             instruction=row.get("instruction") or "",
             status=cls._coerce_status(row.get("status")),
+            phase=row.get("phase") or "created",
             plan_steps=plan_steps,
             plan_studio_id=row.get("plan_studio_id"),
             created_at=row.get("created_at", datetime.now()),

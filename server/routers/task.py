@@ -142,6 +142,8 @@ async def _save_plan_for_review(
     label: str | None = None,
     clarified: bool = False,
 ) -> PathNode:
+    if not steps:
+        raise ValueError("Leader returned an empty execution plan; refusing to enter approval state.")
     plan_str = _plan_review_text(steps, source_text, clarified=clarified)
     task_snap = await task_store.get(task_id)
     x_offset = _iteration_x_offset(task_snap)
@@ -294,8 +296,9 @@ async def _run_ask_pipeline(task_id: str, question: str, preferred_studio_id: st
                 "studio_scenario": studio_info["scenario"],
             }
             action = "route"
-            await task_store.set_status_message(
+            await task_store.set_phase(
                 task_id,
+                "studio_selected",
                 enc(
                     "backendTaskStatus.reuse_studio_leader_plan",
                     name=studio_info["scenario"] or preferred_studio_id,
@@ -306,7 +309,7 @@ async def _run_ask_pipeline(task_id: str, question: str, preferred_studio_id: st
             logger.warning(f"[/ask] task={task_id} 指定工作室不存在，回退到常规路由: {preferred_studio_id}")
 
     if route_res is None:
-        await task_store.set_status_message(task_id, enc("backendTaskStatus.agent_zero_evaluating"))
+        await task_store.set_phase(task_id, "routing", enc("backendTaskStatus.agent_zero_evaluating"))
 
         logger.info(f"[/ask] task={task_id} 开始路由：{question[:60]}")
         try:
@@ -325,7 +328,7 @@ async def _run_ask_pipeline(task_id: str, question: str, preferred_studio_id: st
         x_offset = _iteration_x_offset(task_snap)
         studio_info["id"] = "studio_0"
         studio_info["scenario"] = route_res.get("studio_scenario") or "Studio 0"
-        await task_store.set_status_message(task_id, enc("backendTaskStatus.agent_zero_direct"))
+        await task_store.set_phase(task_id, "direct_answering", enc("backendTaskStatus.agent_zero_direct"))
         answer = route_res.get("answer") or ("已完成直接回答。" if is_chinese(question) else "Direct answer completed.")
         node_id = str(uuid.uuid4())[:8]
         root_node = PathNode(
@@ -348,7 +351,7 @@ async def _run_ask_pipeline(task_id: str, question: str, preferred_studio_id: st
         return
 
     if action == "create_studio":
-        await task_store.set_status_message(task_id, enc("backendTaskStatus.creating_new_studio"))
+        await task_store.set_phase(task_id, "creating_studio", enc("backendTaskStatus.creating_new_studio"))
         new_scenario = route_res.get("studio_name", "Dynamic Incubation Studio")
         leader_role = route_res.get("leader_role", "Lead")
         new_studio = await studio_store.create(StudioCreate(
@@ -363,13 +366,16 @@ async def _run_ask_pipeline(task_id: str, question: str, preferred_studio_id: st
         studio_info["scenario"] = route_res.get("studio_scenario") or ""
 
     studio_info["id"] = studio_id
-    await task_store.set_status_message(
+    await task_store.set_phase(
         task_id,
+        "leader_planning",
         enc("backendTaskStatus.handed_to_studio_leader", name=studio_info["scenario"] or studio_id),
     )
 
     logger.info(f"[/ask] task={task_id} 开始 Leader 规划，studio={studio_id}")
     plan_data = await _run_leader_planning(task_id, studio_id, question)
+    await task_store.set_phase(task_id, "plan_validating", enc("backendTaskStatus.plan_validating"))
+    plan_data = await _ensure_executable_plan(task_id, studio_id, question, plan_data, "ask")
 
     if plan_data.get("action") == "need_clarification":
         questions = plan_data.get("questions", [])
@@ -391,9 +397,21 @@ async def _run_leader_planning(task_id: str, studio_id: str, goal: str) -> dict:
     from storage.database import get_db
     recruit_count = 0
     while True:
+        await task_store.set_phase(task_id, "leader_planning")
         plan_res = await studio_leader.plan_sub_tasks(task_id, studio_id, goal)
+        logger.info(
+            f"[LeaderPlanResult] task={task_id} studio={studio_id} "
+            f"round={recruit_count + 1} action={plan_res.get('action')} "
+            f"steps={len(plan_res.get('steps') or []) if isinstance(plan_res.get('steps'), list) else 0} "
+            f"questions={len(plan_res.get('questions') or []) if isinstance(plan_res.get('questions'), list) else 0}"
+        )
         if plan_res.get("action") == "recruit_employee" and recruit_count < MAX_RECRUIT_RETRIES:
             role_needed = plan_res.get("employee_role", "Unnamed Specialist")
+            await task_store.set_phase(
+                task_id,
+                "recruiting",
+                enc("backendTaskStatus.recruiting_employee", role=role_needed),
+            )
             # HR 专员决定该角色所需技能
             skills_needed = await _hr_decide_skills(role_needed)
             emp_id = str(uuid.uuid4())[:8]
@@ -408,8 +426,54 @@ async def _run_leader_planning(task_id: str, studio_id: str, goal: str) -> dict:
                 await db.close()
             logger.info(f"HR 为 [{role_needed}] 分配技能: {skills_needed}")
             recruit_count += 1
+        elif plan_res.get("action") == "recruit_employee":
+            logger.warning(
+                f"Leader repeatedly requested recruitment for task={task_id}; "
+                f"max recruit retries reached ({MAX_RECRUIT_RETRIES}), using fallback execution plan"
+            )
+            studio = await studio_store.get(studio_id)
+            return studio_leader._fallback_plan_or_recruit(  # noqa: SLF001
+                goal,
+                studio.sub_agents if studio else [],
+                [],
+                "max_recruit_retries",
+                allow_recruit=False,
+            )
         else:
             return plan_res
+
+
+async def _ensure_executable_plan(
+    task_id: str,
+    studio_id: str,
+    goal: str,
+    plan_data: dict,
+    source: str,
+) -> dict:
+    if plan_data.get("action") == "need_clarification":
+        return plan_data
+
+    steps = plan_data.get("steps")
+    if isinstance(steps, list) and steps:
+        return plan_data
+
+    logger.warning(
+        f"[{source}] task={task_id} Leader returned no executable steps "
+        f"(action={plan_data.get('action')}); forcing fallback plan"
+    )
+    studio = await studio_store.get(studio_id)
+    fallback = studio_leader._fallback_plan_or_recruit(  # noqa: SLF001
+        goal,
+        studio.sub_agents if studio else [],
+        [],
+        f"{source}_empty_steps",
+        allow_recruit=False,
+    )
+    fallback_steps = fallback.get("steps")
+    if fallback.get("action") == "plan" and isinstance(fallback_steps, list) and fallback_steps:
+        return fallback
+
+    raise ValueError("Leader returned no executable plan and fallback could not create one.")
 
 
 async def _hr_decide_skills(role: str) -> list[str]:
@@ -574,6 +638,7 @@ async def clarify_task(task_id: str, request: Request, payload: dict):
 
     await task_store.save_clarification_answers(task_id, answers)
     await task_store.update_task_status(task_id, "planning")
+    await task_store.set_phase(task_id, "leader_replanning", enc("backendTaskStatus.clarify_received_replanning"))
 
     async def event_generator():
         # 尝试查一次工作室名；失败不影响主流程（避免 DB 池紧张时卡死）
@@ -584,13 +649,16 @@ async def clarify_task(task_id: str, request: Request, payload: dict):
         except Exception as e:
             logger.warning(f"[/clarify] task={task_id} 查询工作室名失败（忽略）: {e}")
 
-        def _status(status_str, message):
+        def _status(status_str, message, phase: str | None = None):
             payload = {
                 "status": status_str,
+                "phase": phase,
                 "message": message,
                 "task_id": task_id,
                 "studio_id": studio_id,
             }
+            if payload["phase"] is None:
+                payload.pop("phase")
             if studio_scenario:
                 payload["studio_scenario"] = studio_scenario
             return {"event": "status", "data": json.dumps(payload)}
@@ -608,22 +676,58 @@ async def clarify_task(task_id: str, request: Request, payload: dict):
             f"{clarification_context}"
         )
 
-        yield _status("planning", enc("backendTaskStatus.clarify_received_replanning"))
-        plan_data = await _run_leader_planning(task_id, studio_id, goal_with_answers)
-        steps = plan_data.get("steps", [])
-        _validate_dag(steps)
+        yield _status("planning", enc("backendTaskStatus.clarify_received_replanning"), "leader_replanning")
+        try:
+            plan_data = await _run_leader_planning(task_id, studio_id, goal_with_answers)
+            await task_store.set_phase(task_id, "plan_validating", enc("backendTaskStatus.plan_validating"))
+            plan_data = await _ensure_executable_plan(
+                task_id,
+                studio_id,
+                goal_with_answers,
+                plan_data,
+                "clarify",
+            )
+            if plan_data.get("action") == "need_clarification":
+                questions = plan_data.get("questions", [])
+                await task_store.save_clarification(task_id, studio_id, questions)
+                await task_store.set_status_message(task_id, enc("backendTaskStatus.leader_need_clarification"))
+                await task_store.update_task_status(task_id, "need_clarification")
+                yield _status(
+                    "need_clarification",
+                    enc("backendTaskStatus.leader_need_clarification"),
+                    "clarification_ready",
+                )
+                yield {"event": "done_pause", "data": json.dumps({
+                    "action": "need_clarification",
+                    "studio_id": studio_id,
+                    "studio_scenario": studio_scenario,
+                    "questions": questions,
+                    "task_id": task_id,
+                }, default=_json_serial)}
+                yield {"event": "done", "data": json.dumps({"status": "need_clarification", "task_id": task_id})}
+                return
+            steps = plan_data.get("steps", [])
+            _validate_dag(steps)
 
-        root_node = await _save_plan_for_review(
-            task_id,
-            studio_id,
-            steps,
-            task.question,
-            input_text=goal_with_answers,
-            label="方案审批（已包含补充信息）" if is_chinese(task.question) else "Plan Review (Clarifications Included)",
-            clarified=True,
-        )
+            root_node = await _save_plan_for_review(
+                task_id,
+                studio_id,
+                steps,
+                task.question,
+                input_text=goal_with_answers,
+                label="方案审批（已包含补充信息）" if is_chinese(task.question) else "Plan Review (Clarifications Included)",
+                clarified=True,
+            )
+        except Exception as e:
+            logger.exception(f"[/clarify] task={task_id} 重新规划失败: {e}")
+            message = enc("backendTaskStatus.task_failed_detail", detail=str(e)[:480])
+            await task_store.set_status_message(task_id, message)
+            await task_store.update_task_status(task_id, "failed")
+            yield _status("failed", message, "failed")
+            yield {"event": "done", "data": json.dumps({"status": "failed", "task_id": task_id})}
+            return
         yield {"event": "node_added", "data": json.dumps(root_node.model_dump(), default=_json_serial)}
-        yield _status("await_leader_plan_approval", enc("backendTaskStatus.await_plan_review"))
+        yield _status("await_leader_plan_approval", enc("backendTaskStatus.await_plan_review"), "plan_ready")
         yield {"event": "done_pause", "data": json.dumps({
             "action": "review_plan",
             "studio_id": studio_id,
@@ -809,7 +913,16 @@ async def _execute_background_orchestration(task_id: str, studio_id: str, route_
                 else:
                     question_with_feedback = task.question + f"\n[User requested plan revision: {feedback}]"
                 await task_store.update_task_status(task_id, "planning")
+                await task_store.set_phase(task_id, "leader_replanning", enc("backendTaskStatus.plan_revision_replanning"))
                 plan_data = await _run_leader_planning(task_id, studio_id, question_with_feedback)
+                await task_store.set_phase(task_id, "plan_validating", enc("backendTaskStatus.plan_validating"))
+                plan_data = await _ensure_executable_plan(
+                    task_id,
+                    studio_id,
+                    question_with_feedback,
+                    plan_data,
+                    "plan_revision",
+                )
                 if plan_data.get("action") == "need_clarification":
                     questions = plan_data.get("questions", [])
                     await task_store.save_clarification(task_id, studio_id, questions)
@@ -1513,7 +1626,7 @@ async def edit_step(task_id: str, request: Request, payload: dict):
 async def task_stream_view(task_id: str, request: Request):
     async def event_tailer():
         last_nodes_len = 0
-        last_sig: tuple[str | None, str] | None = None
+        last_sig: tuple[str | None, str, str] | None = None
         pause_event_sent = False
         # 同时跟踪 status 和 output，任意一个变化都推 node_updated，
         # 让前端能实时看到模型在做什么（ReAct 步骤 / 质检阶段等）
@@ -1533,15 +1646,24 @@ async def task_stream_view(task_id: str, request: Request):
                 break
 
             msg = (t.status_message or "")
-            status_sig: tuple[str | None, str] = (t.status, msg)
+            status_sig: tuple[str | None, str, str] = (t.status, t.phase or "", msg)
             if status_sig != last_sig:
-                payload: dict = {"status": t.status, "task_id": task_id, "message": msg}
+                payload: dict = {
+                    "status": t.status,
+                    "phase": t.phase,
+                    "task_id": task_id,
+                    "message": msg,
+                }
                 sid = t.studio_id or t.plan_studio_id
                 if sid:
                     payload["studio_id"] = sid
                     stu = await studio_store.get(sid)
                     if stu and stu.scenario:
                         payload["studio_scenario"] = stu.scenario
+                if t.status == "need_clarification":
+                    payload["questions"] = t.clarification_questions
+                elif t.status == "await_leader_plan_approval":
+                    payload["steps"] = t.plan_steps
                 yield {"event": "status", "data": json.dumps(payload, default=_json_serial)}
                 last_sig = status_sig
 
@@ -1570,6 +1692,7 @@ async def task_stream_view(task_id: str, request: Request):
                 yield {"event": "heartbeat", "data": json.dumps({
                     "task_id": task_id,
                     "task_status": t.status,
+                    "task_phase": t.phase,
                     "ts_ms": int(datetime.now().timestamp() * 1000),
                     "running_count": len(running_nodes),
                     "running_nodes": running_nodes,
@@ -1972,7 +2095,7 @@ async def iterate_selection(task_id: str, payload: dict):
         source_node_id=node_id,
     )
     await task_store.update_task_status(task_id, "planning")
-    await task_store.set_status_message(task_id, enc("backendTaskStatus.agent0_replan_iteration"))
+    await task_store.set_phase(task_id, "routing", enc("backendTaskStatus.agent0_replan_iteration"))
     # 不传 preferred_studio_id：与「基于结果迭代」一致，由 Agent0 重新路由；沙箱仍属当前 task
     await _schedule_ask_pipeline(
         task_id,
@@ -2072,7 +2195,7 @@ async def iterate_task(task_id: str, payload: dict):
         source_node_id=source_node_id,
     )
     await task_store.update_task_status(task_id, "planning")
-    await task_store.set_status_message(task_id, enc("backendTaskStatus.agent0_iterate_from_result"))
+    await task_store.set_phase(task_id, "routing", enc("backendTaskStatus.agent0_iterate_from_result"))
     # 不传 preferred_studio_id：不复用上一轮 studio 路由绑死；沙箱仍为当前 task（见 sandbox_owner_*）
     await _schedule_ask_pipeline(
         task_id,
@@ -2334,7 +2457,16 @@ async def run_scheduled_task_pipeline(task_id: str, studio_id: str, message: str
     """Run a scheduled task pipeline inside an execution worker."""
     try:
         await task_store.update_task_status(task_id, "planning")
+        await task_store.set_phase(task_id, "leader_planning", enc("backendTaskStatus.scheduled_leader_planning"))
         plan_data = await _run_leader_planning(task_id, studio_id, message)
+        await task_store.set_phase(task_id, "plan_validating", enc("backendTaskStatus.plan_validating"))
+        plan_data = await _ensure_executable_plan(
+            task_id,
+            studio_id,
+            message,
+            plan_data,
+            "scheduled",
+        )
 
         # 定时任务模式下遇到澄清需求直接落到 need_clarification 等人工介入
         if plan_data.get("action") == "need_clarification":

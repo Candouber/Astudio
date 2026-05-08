@@ -232,6 +232,7 @@ async def init_database():
                 studio_id TEXT,
                 question TEXT NOT NULL,
                 status TEXT DEFAULT 'planning',
+                phase TEXT DEFAULT 'created',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 started_at TIMESTAMP,
@@ -252,6 +253,7 @@ async def init_database():
                 title TEXT DEFAULT '',
                 instruction TEXT DEFAULT '',
                 status TEXT DEFAULT 'planning',
+                phase TEXT DEFAULT 'created',
                 plan_steps TEXT DEFAULT '[]',
                 plan_studio_id TEXT,
                 summary TEXT DEFAULT '',
@@ -402,6 +404,20 @@ async def init_database():
                 ("clarification_questions",  "TEXT DEFAULT '[]'"),  # Leader 待确认问题 JSON
                 ("clarification_answers",    "TEXT DEFAULT '{}'"),  # 用户回答 JSON
                 ("status_message",           "TEXT DEFAULT ''"),    # 规划/执行阶段人可读进展（与 status 正交）
+                ("phase",                    "TEXT DEFAULT 'created'"), # 细粒度流程阶段（与 status 正交）
+            ],
+            "task_iterations": [
+                ("parent_iteration_id", "TEXT"),
+                ("source_node_id",      "TEXT"),
+                ("title",               "TEXT DEFAULT ''"),
+                ("instruction",         "TEXT DEFAULT ''"),
+                ("phase",               "TEXT DEFAULT 'created'"),
+                ("plan_steps",          "TEXT DEFAULT '[]'"),
+                ("plan_studio_id",      "TEXT"),
+                ("summary",             "TEXT DEFAULT ''"),
+                ("updated_at",          "TIMESTAMP"),
+                ("started_at",          "TIMESTAMP"),
+                ("completed_at",        "TIMESTAMP"),
             ],
             "path_nodes": [
                 ("iteration_id",     "TEXT"),

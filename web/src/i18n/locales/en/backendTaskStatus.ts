@@ -10,6 +10,10 @@ const en: TranslationTree = {
     answer_done: 'Answer complete',
     creating_new_studio: 'Agent Zero is spinning up a new studio…',
     handed_to_studio_leader: 'Handed to "{{name}}"; Leader is breaking down the task…',
+    recruiting_employee: 'Recruiting "{{role}}" to cover missing studio capability…',
+    plan_validating: 'Validating that the Leader plan is executable…',
+    plan_revision_replanning: 'Leader is replanning from your requested changes…',
+    scheduled_leader_planning: 'Scheduled task triggered; Leader is planning…',
     leader_need_clarification:
       'The Leader needs more detail — open the task page to complete the questionnaire.',
     await_plan_review: 'Waiting for you to review the Leader\'s plan…',

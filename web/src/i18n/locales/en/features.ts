@@ -60,6 +60,7 @@ const en: TranslationTree = {
     noData: 'No clarification data — ask again.',
     defaultAnswer: 'Not sure yet',
     submitting: 'Submitting and re-planning…',
+    needMoreInfo: 'The leader still needs more information. Add details and submit again.',
     emptyPlan: 'Leader returned an empty plan — retry or refine your request.',
     submitFailed: 'Submit failed — try again.',
     title: 'Clarification',

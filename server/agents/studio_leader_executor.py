@@ -1,5 +1,6 @@
 """Studio leader executor for planning, hiring, review, and synthesis inputs."""
 import json
+import re
 from typing import Any, Dict, List
 
 from loguru import logger
@@ -21,6 +22,59 @@ def _format_skills_for_prompt(skills: List[Dict[str, str]]) -> str:
         desc = (s.get("description") or "").replace("|", "/").replace("\n", " ")
         lines.append(f"| `{s['slug']}` | {s.get('name') or s['slug']} | {desc} |")
     return "\n".join(lines)
+
+
+def _strip_json_fence(value: Any) -> str:
+    text = str(value).strip()
+    if text.startswith("```"):
+        first_newline = text.find("\n")
+        if first_newline != -1:
+            text = text[first_newline + 1:]
+        if text.endswith("```"):
+            text = text[: -3]
+        text = text.strip()
+    return text
+
+
+def _extract_json_object(text: str) -> str:
+    stripped = _strip_json_fence(text)
+    if stripped.startswith("{") and stripped.endswith("}"):
+        return stripped
+    match = re.search(r"\{.*\}", stripped, re.DOTALL)
+    if match:
+        return match.group(0)
+    return stripped
+
+
+def _coerce_steps(result: dict) -> list:
+    raw = result.get("steps")
+    if raw is None:
+        raw = result.get("sub_tasks")
+    if raw is None:
+        raw = result.get("tasks")
+    if raw is None and isinstance(result.get("plan"), dict):
+        raw = result["plan"].get("steps")
+    if raw is None and isinstance(result.get("plan"), list):
+        raw = result.get("plan")
+    return raw if isinstance(raw, list) else []
+
+
+def _log_plan_audit(
+    task_id: str,
+    studio_id: str,
+    result: dict,
+    sub_agents: list,
+    response_str: Any,
+    note: str = "",
+) -> None:
+    questions = result.get("questions")
+    logger.info(
+        "[LeaderPlanAudit] "
+        f"task={task_id} studio={studio_id} note={note or '-'} "
+        f"action={result.get('action')} steps={len(_coerce_steps(result))} "
+        f"questions={len(questions) if isinstance(questions, list) else 0} "
+        f"employees={len(sub_agents)} raw_preview={str(response_str)[:1200]}"
+    )
 
 
 class StudioLeaderExecutor:
@@ -94,26 +148,32 @@ class StudioLeaderExecutor:
             }
 
         try:
-            text = str(response_str).strip()
-            # 更鲁棒的 fence 解析：兼容 ```json\n...\n``` 以及 ```\n...\n```
-            if text.startswith("```"):
-                first_newline = text.find("\n")
-                if first_newline != -1:
-                    text = text[first_newline + 1:]
-                if text.endswith("```"):
-                    text = text[: -3]
-                text = text.strip()
-
-            result = json.loads(text)
+            result = json.loads(_extract_json_object(str(response_str)))
 
             # 安全检查
             action = result.get("action")
             if action not in ["plan", "recruit_employee", "need_clarification"]:
-                logger.warning(f"Leader 输出未知action: {action}，回退为 plan")
-                result["action"] = "plan"
-                if "steps" not in result:
-                    result["steps"] = []
+                if _coerce_steps(result):
+                    logger.warning(f"Leader 输出未知 action={action} 但包含 steps，回退为 plan")
+                    action = "plan"
+                    result["action"] = "plan"
+                else:
+                    logger.warning(f"Leader 输出未知 action={action}，使用规划兜底")
+                    _log_plan_audit(task_id, studio_id, result, sub_agents, response_str, "unknown_action")
+                    return self._fallback_plan_or_recruit(task_goal, sub_agents, available_skills, "unknown_action")
 
+            if action == "plan":
+                steps = _coerce_steps(result)
+                if not steps:
+                    logger.warning(
+                        "Leader returned empty plan; using fallback. "
+                        f"studio={studio_id}, employees={len(sub_agents)}, raw={str(response_str)[:500]}"
+                    )
+                    _log_plan_audit(task_id, studio_id, result, sub_agents, response_str, "empty_plan")
+                    return self._fallback_plan_or_recruit(task_goal, sub_agents, available_skills, "empty_plan")
+                result["steps"] = steps
+
+            _log_plan_audit(task_id, studio_id, result, sub_agents, response_str)
             return result
         except json.JSONDecodeError as e:
             logger.error(f"Planning failed to parse JSON: {e}\nResponse: {response_str}")
@@ -129,6 +189,37 @@ class StudioLeaderExecutor:
                 ],
                 "message": f"Leader planning format error: {e}",
             }
+
+    def _fallback_plan_or_recruit(
+        self,
+        task_goal: str,
+        sub_agents: list,
+        available_skills: list[dict],
+        reason: str,
+        allow_recruit: bool = True,
+    ) -> Dict[str, Any]:
+        if allow_recruit and len(sub_agents) < 2:
+            return {
+                "action": "recruit_employee",
+                "employee_role": _fallback_employee_role(task_goal),
+                "required_skills": _fallback_skill_slugs(available_skills),
+                "message": f"Fallback recruit because leader returned no usable plan: {reason}",
+            }
+
+        assignee = _choose_fallback_assignee(sub_agents)
+        return {
+            "action": "plan",
+            "steps": [
+                {
+                    "id": "s1",
+                    "step_label": _fallback_step_label(task_goal),
+                    "assign_to_role": assignee,
+                    "input_context": _fallback_input_context(task_goal),
+                    "depends_on": [],
+                }
+            ],
+            "message": f"Fallback single-step plan because leader returned no usable plan: {reason}",
+        }
 
     async def review_sub_task(
         self,
@@ -219,3 +310,58 @@ def _localized_leader_parse_error(source_text: str) -> str:
     if is_chinese(source_text):
         return "Leader 规划结果无法解析为 JSON。请补充说明你的需求，或稍后重试。"
     return "The Leader planning response could not be parsed as JSON. Please clarify your request or try again later."
+
+
+def _fallback_employee_role(source_text: str) -> str:
+    text = source_text.lower()
+    if any(token in text for token in ("源码", "代码", "code", "repository", "repo")):
+        return "Codebase Researcher" if not is_chinese(source_text) else "代码库研究员"
+    if any(token in text for token in ("搜索", "调研", "research", "search")):
+        return "Research Specialist" if not is_chinese(source_text) else "信息研究员"
+    if any(token in text for token in ("excel", "csv", "data", "数据")):
+        return "Data Analyst" if not is_chinese(source_text) else "数据分析师"
+    return "Execution Specialist" if not is_chinese(source_text) else "任务执行专员"
+
+
+def _fallback_skill_slugs(available_skills: list[dict]) -> list[str]:
+    available = {str(item.get("slug") or "") for item in available_skills}
+    preferred = [
+        "list_files",
+        "read_file",
+        "write_file",
+        "execute_code",
+        "web_search",
+        "browser_search",
+        "use_skill",
+    ]
+    selected = [slug for slug in preferred if slug in available]
+    if selected:
+        return selected[:5]
+    return [slug for slug in available if slug][:3]
+
+
+def _choose_fallback_assignee(sub_agents: list) -> str:
+    if not sub_agents:
+        return "Execution Specialist"
+    with_skills = [agent for agent in sub_agents if getattr(agent, "skills", None)]
+    chosen = with_skills[0] if with_skills else sub_agents[0]
+    return getattr(chosen, "role", "") or "Execution Specialist"
+
+
+def _fallback_step_label(source_text: str) -> str:
+    return "完成用户请求并交付结果" if is_chinese(source_text) else "Complete the user request and deliver the result"
+
+
+def _fallback_input_context(source_text: str) -> str:
+    if is_chinese(source_text):
+        return (
+            "Leader 规划模型未返回可用拆解方案。请作为兜底执行步骤，直接围绕用户目标完成必要的检索、"
+            "文件读取、分析、代码或文档产出，并给出清晰结论、产物路径和后续建议。\n\n"
+            f"用户目标：{source_text}"
+        )
+    return (
+        "The Leader planning model did not return a usable decomposition. As a fallback execution step, "
+        "complete the necessary search, file reading, analysis, coding, or document output directly around "
+        "the user's goal. Return clear conclusions, artifact paths, and next-step suggestions.\n\n"
+        f"User goal: {source_text}"
+    )
