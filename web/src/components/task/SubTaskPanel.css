@@ -77,6 +77,40 @@
   border-color: color-mix(in srgb, var(--accent-danger) 20%, transparent);
 }
 
+.subtask-panel__trace {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.subtask-panel__trace li {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+}
+
+.subtask-panel__trace span {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--accent-brand);
+}
+
+.subtask-panel__trace p {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
 .subtask-panel__retry-form {
   display: flex;
   flex-direction: column;

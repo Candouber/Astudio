@@ -55,12 +55,14 @@ export default function SubTaskPanel() {
   const isBlocked = node.status === 'error'
   const isSkipped = isBlocked && node.output?.startsWith('[SKIPPED]')
   const canRetry = (isBlocked && !isSkipped) || isCompleted
+  const trace = node.trace || []
 
   // 阻塞原因（去掉前缀标签）
   const blockerReason = displayOutput
     .replace(/^\[BLOCKED\]\s*/, '')
     .replace(/^\[SKIPPED\]\s*/, '')
     .replace(/^\[CRASH\]:\s*/, '')
+  const translatedBlockerReason = translateStatusMessage(locale, blockerReason)
 
   const handleRetry = async () => {
     // 完成节点可以不填额外信息直接重新执行
@@ -158,8 +160,22 @@ export default function SubTaskPanel() {
             {isSkipped ? t('subTaskPanel.skipReason') : t('subTaskPanel.blockReason')}
           </h4>
           <div className="subtask-panel__content-box subtask-panel__blocker-text">
-            {blockerReason}
+            {translatedBlockerReason}
           </div>
+        </div>
+      )}
+
+      {trace.length > 0 && (
+        <div className="subtask-panel__section">
+          <h4 className="subtask-panel__section-title">{t('subTaskPanel.traceTitle')}</h4>
+          <ol className="subtask-panel__trace">
+            {trace.map((item, index) => (
+              <li key={`${index}-${item}`}>
+                <span>{String(index + 1).padStart(2, '0')}</span>
+                <p>{item}</p>
+              </li>
+            ))}
+          </ol>
         </div>
       )}
 

@@ -378,6 +378,7 @@ function handleStreamEvent(event: string, rawData: string, taskId: string) {
           input?: string
           output?: string
           status?: string
+          trace?: string[]
           deep_dives?: never[]
           distilled_summary?: string
           parent_id?: string
@@ -391,6 +392,7 @@ function handleStreamEvent(event: string, rawData: string, taskId: string) {
           input: d.input || '',
           output: d.output || '',
           status: (d.status || 'pending') as PathNode['status'],
+          trace: Array.isArray(d.trace) ? d.trace : [],
           deep_dives: d.deep_dives || [],
           distilled_summary: d.distilled_summary || '',
           parent_id: d.parent_id,
@@ -402,9 +404,9 @@ function handleStreamEvent(event: string, rawData: string, taskId: string) {
         break
       }
       case 'node_updated': {
-        const d = data as { node_id: string; status: string; output?: string }
-        store.updateNodeStatus(d.node_id, d.status as PathNode['status'], d.output)
-        store.markNodeActivity(d.node_id, d.output || '')
+        const d = data as { node_id: string; status: string; output?: string; trace?: string[] }
+        store.updateNodeStatus(d.node_id, d.status as PathNode['status'], d.output, d.trace)
+        store.markNodeActivity(d.node_id, d.output || d.trace?.[d.trace.length - 1] || '')
         break
       }
       case 'done_pause': {

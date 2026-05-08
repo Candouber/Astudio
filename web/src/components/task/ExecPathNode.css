@@ -162,6 +162,23 @@
   word-break: break-all;
 }
 
+.exec-node__trace {
+  margin: 2px 0 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 58px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 0.66rem;
+  line-height: 1.3;
+}
+
+.exec-node__trace li {
+  word-break: break-word;
+}
+
 .exec-node__cursor {
   color: var(--accent-brand);
   animation: pulse 1s ease-in-out infinite;

@@ -12,6 +12,7 @@ interface PathNodeData {
   stepLabel: string
   status: string
   output: string
+  trace?: string[]
   iterationIndex?: number
   iterationTitle?: string
   iterationInstruction?: string
@@ -53,7 +54,10 @@ function ExecPathNode({ data }: NodeProps) {
 
   // 优先用 progress callback 推上来的"模型在做什么"消息，
   // 兜底用 node.output 截尾
-  const liveMessage = activity?.latestMessage || d.output || ''
+  const trace = d.trace || []
+  const tracePreview = trace.slice(-3)
+  const latestTrace = trace[trace.length - 1] || ''
+  const liveMessage = activity?.latestMessage || latestTrace || d.output || ''
 
   const typeIcon = d.type === 'agent_zero' ? '🧠' : d.type === 'sub_agent' ? '⚡' : '👤'
 
@@ -98,6 +102,15 @@ function ExecPathNode({ data }: NodeProps) {
             <div className="exec-node__live-msg" title={liveMessage}>
               {liveMessage.slice(0, 80)}{liveMessage.length > 80 ? '…' : ''}
             </div>
+          )}
+          {tracePreview.length > 0 && (
+            <ol className="exec-node__trace" title={trace.join('\n')}>
+              {tracePreview.map((item, index) => (
+                <li key={`${index}-${item}`}>
+                  {item.slice(0, 72)}{item.length > 72 ? '…' : ''}
+                </li>
+              ))}
+            </ol>
           )}
         </div>
       )}

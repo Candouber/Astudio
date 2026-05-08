@@ -27,6 +27,7 @@ class PathNode(BaseModel):
     status: Literal["pending", "running", "completed", "error", "corrected", "deprecated"] = "pending"
     deep_dives: list[DeepDive] = Field(default_factory=list)
     distilled_summary: str = ""
+    trace: list[str] = Field(default_factory=list)
     parent_id: Optional[str] = None
     position: dict = Field(default_factory=lambda: {"x": 0, "y": 0})
 

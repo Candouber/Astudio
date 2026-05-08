@@ -78,6 +78,7 @@ const zh: TranslationTree = {
     briefing: '任务简报',
     skipReason: '跳过原因',
     blockReason: '阻塞原因',
+    traceTitle: '执行过程',
     outputTitle: '输出内容',
     rerunCompleted: '重新执行此步骤（下游同步更新）',
     rerunBlocked: '补充信息并重试此步骤',

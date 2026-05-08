@@ -59,6 +59,7 @@ export default function ExecMonitor() {
           stepLabel: n.step_label,
           status: n.status,
           output: n.output,
+          trace: n.trace || [],
           iterationIndex: meta?.index,
           iterationTitle: meta?.title,
           iterationInstruction: meta?.instruction,

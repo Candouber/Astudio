@@ -66,6 +66,12 @@ class TaskStore:
             for nr in node_rows:
                 nd = dict(nr)
                 deep_dives = dd_by_node.get(nd["id"], [])
+                try:
+                    trace = json.loads(nd.get("trace") or "[]")
+                except Exception:
+                    trace = []
+                if not isinstance(trace, list):
+                    trace = []
                 nodes.append(PathNode(
                     id=nd["id"],
                     iteration_id=nd.get("iteration_id"),
@@ -77,6 +83,7 @@ class TaskStore:
                     status=nd.get("status", "pending"),
                     deep_dives=deep_dives,
                     distilled_summary=nd.get("distilled_summary", ""),
+                    trace=[str(item) for item in trace if str(item).strip()],
                     parent_id=nd.get("parent_id"),
                     position={"x": nd.get("position_x", 0), "y": nd.get("position_y", 0)},
                 ))
@@ -431,10 +438,11 @@ class TaskStore:
             await db.execute(
                 """INSERT INTO path_nodes
                    (id, task_id, iteration_id, type, agent_role, step_label, input, output, status,
-                   distilled_summary, parent_id, position_x, position_y)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   distilled_summary, trace, parent_id, position_x, position_y)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (node.id, task_id, iteration_id, node.type, node.agent_role, node.step_label,
                  node.input, node.output, node.status, node.distilled_summary,
+                 json.dumps(node.trace, ensure_ascii=False),
                  node.parent_id, node.position.get("x", 0), node.position.get("y", 0))
             )
             await db.execute(
@@ -478,6 +486,45 @@ class TaskStore:
             await db.execute(
                 "UPDATE path_nodes SET distilled_summary = ? WHERE id = ?",
                 (summary, node_id)
+            )
+            await db.commit()
+        finally:
+            await db.close()
+
+    async def append_node_trace(self, node_id: str, message: str, max_items: int = 30, max_chars: int = 220):
+        """Append a short, user-visible execution trace message for a node."""
+        text = " ".join((message or "").split())
+        if not text:
+            return
+        if len(text) > max_chars:
+            text = text[:max_chars - 1].rstrip() + "…"
+
+        db = await get_db()
+        try:
+            now = datetime.now().isoformat()
+            cursor = await db.execute("SELECT trace FROM path_nodes WHERE id = ?", (node_id,))
+            row = await cursor.fetchone()
+            if not row:
+                return
+            try:
+                trace = json.loads((row["trace"] if isinstance(row, dict) else row[0]) or "[]")
+            except Exception:
+                trace = []
+            if not isinstance(trace, list):
+                trace = []
+            trace = [str(item) for item in trace if str(item).strip()]
+            if not trace or trace[-1] != text:
+                trace.append(text)
+            trace = trace[-max_items:]
+            await db.execute(
+                "UPDATE path_nodes SET trace = ? WHERE id = ?",
+                (json.dumps(trace, ensure_ascii=False), node_id),
+            )
+            await db.execute(
+                """UPDATE tasks
+                   SET updated_at = ?, last_activity_at = ?
+                   WHERE id = (SELECT task_id FROM path_nodes WHERE id = ?)""",
+                (now, now, node_id),
             )
             await db.commit()
         finally:

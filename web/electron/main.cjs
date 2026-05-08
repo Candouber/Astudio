@@ -5,6 +5,7 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const http = require('node:http')
 const net = require('node:net')
+const os = require('node:os')
 const path = require('node:path')
 
 const SERVER_HOST = '127.0.0.1'
@@ -104,6 +105,42 @@ function updateUnsupportedState() {
   })
 }
 
+function friendlyUpdateError(error) {
+  const message = error instanceof Error ? error.message : String(error)
+  if (
+    process.platform === 'darwin' &&
+    (
+      message.includes('read-only volume') ||
+      message.includes('Cannot update while running on a read-only volume') ||
+      message.includes('move the application out of the Downloads directory') ||
+      message.includes('Squirrel.Mac/issues/182')
+    )
+  ) {
+    return '无法自动更新：当前应用运行在 dmg 挂载盘、下载目录或 macOS 隔离路径中。请退出 AStudio，将 AStudio.app 拖到“应用程序”文件夹后重新打开，再检查更新。'
+  }
+  return message
+}
+
+function macUpdateInstallLocationState() {
+  if (process.platform !== 'darwin' || !app.isPackaged) return null
+
+  const execPath = path.normalize(process.execPath)
+  const appBundlePath = path.normalize(path.resolve(execPath, '../../..'))
+  const downloadsDir = path.normalize(path.join(os.homedir(), 'Downloads')) + path.sep
+  const isMountedVolume = appBundlePath.startsWith('/Volumes/')
+  const isDownloadsApp = appBundlePath.startsWith(downloadsDir)
+  const isTranslocated = appBundlePath.includes('/AppTranslocation/')
+
+  if (!isMountedVolume && !isDownloadsApp && !isTranslocated) return null
+
+  return setUpdateState({
+    status: 'error',
+    error: '无法自动更新：当前应用运行在 dmg 挂载盘、下载目录或 macOS 隔离路径中。请退出 AStudio，将 AStudio.app 拖到“应用程序”文件夹后重新打开，再检查更新。',
+    downloaded: false,
+    downloadProgress: null,
+  })
+}
+
 function configureAutoUpdater() {
   if (updaterConfigured) return
   updaterConfigured = true
@@ -158,7 +195,7 @@ function configureAutoUpdater() {
   autoUpdater.on('error', (error) => {
     setUpdateState({
       status: 'error',
-      error: error instanceof Error ? error.message : String(error),
+      error: friendlyUpdateError(error),
       downloaded: false,
       downloadProgress: null,
     })
@@ -167,6 +204,8 @@ function configureAutoUpdater() {
 
 function assertPackagedUpdates() {
   if (!app.isPackaged) return updateUnsupportedState()
+  const installLocationState = macUpdateInstallLocationState()
+  if (installLocationState) return installLocationState
   return null
 }
 
@@ -731,7 +770,7 @@ ipcMain.handle('app:check-for-updates', async () => {
     .then(() => updateState)
     .catch((error) => setUpdateState({
       status: 'error',
-      error: error instanceof Error ? error.message : String(error),
+      error: friendlyUpdateError(error),
       downloaded: false,
       downloadProgress: null,
     }))
@@ -751,7 +790,7 @@ ipcMain.handle('app:download-update', async () => {
     .then(() => updateState)
     .catch((error) => setUpdateState({
       status: 'error',
-      error: error instanceof Error ? error.message : String(error),
+      error: friendlyUpdateError(error),
       downloaded: false,
       downloadProgress: null,
     }))

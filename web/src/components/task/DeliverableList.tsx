@@ -665,7 +665,7 @@ function DeliverableCard({
   onJumpTo: (nodeId: string) => void
   subTask?: SubTask
 }) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const isCompleted = node.status === 'completed'
   const isError = node.status === 'error'
   const isSkipped = isError && node.output?.startsWith('[SKIPPED]')
@@ -677,6 +677,7 @@ function DeliverableCard({
     ?.replace(/^\[SKIPPED\]\s*/, '')
     ?.replace(/^\[CRASH\]:\s*/, '')
     || ''
+  const translatedBlockerReason = translateStatusMessage(locale, blockerReason)
 
   const cardClass = [
     'deliverable-item',
@@ -749,7 +750,7 @@ function DeliverableCard({
           <span className="deliverable-item__blocker-label">
             {isSkipped ? t('subTaskPanel.skipReason') : t('subTaskPanel.blockReason')}
           </span>
-          <p className="deliverable-item__blocker-text">{blockerReason}</p>
+          <p className="deliverable-item__blocker-text">{translatedBlockerReason}</p>
         </div>
       )}
 

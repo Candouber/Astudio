@@ -264,6 +264,11 @@ class SubAgentExecutor:
                     total_tokens += step_tokens
                 except Exception as llm_err:
                     logger.error(f"[{agent_role}] LLM 调用失败（step {step+1}）: {llm_err}")
+                    await _emit(
+                        f"模型调用失败: {type(llm_err).__name__}"
+                        if zh_progress
+                        else f"Model call failed: {type(llm_err).__name__}"
+                    )
                     return {
                         "status": "blocked",
                         "blocker_reason": (
@@ -286,6 +291,11 @@ class SubAgentExecutor:
                         logger.info(
                             f"[{agent_role}] Step {step+1}: no tool call; accepting plain text "
                             f"as deliverable, len={len(plain_text)}, tokens={total_tokens}"
+                        )
+                        await _emit(
+                            "模型直接给出候选结果，准备提交。"
+                            if zh_progress
+                            else "The model produced a candidate result directly; preparing to submit."
                         )
                         await _emit("正在提交交付结果..." if zh_progress else "Submitting deliverable...")
                         return {
@@ -376,6 +386,11 @@ class SubAgentExecutor:
                             )
                             if controller_result is not None:
                                 blocked_by_controller += 1
+                                await _emit(
+                                    f"搜索请求被控制器截断: {normalized_query[:80]}"
+                                    if zh_progress
+                                    else f"Search request was stopped by the controller: {normalized_query[:80]}"
+                                )
                                 logger.warning(
                                     f"[{agent_role}] search blocked by controller: {reason}"
                                 )
@@ -423,8 +438,18 @@ class SubAgentExecutor:
                         })
                     if failed_count:
                         consecutive_tool_failures += failed_count
+                        await _emit(
+                            f"工具返回 {failed_count} 个失败结果，准备换路或收口。"
+                            if zh_progress
+                            else f"{failed_count} tool result(s) failed; switching path or finalizing."
+                        )
                     else:
                         consecutive_tool_failures = 0
+                        await _emit(
+                            "工具结果可用，继续整理上下文。"
+                            if zh_progress
+                            else "Tool results are available; continuing with the context."
+                        )
                     if (
                         not protocol_calls
                         and consecutive_tool_failures >= _MAX_CONSECUTIVE_TOOL_FAILURES
@@ -439,6 +464,11 @@ class SubAgentExecutor:
                         )
                         logger.warning(
                             f"[{agent_role}] 连续工具失败 {consecutive_tool_failures} 次，进入强制收口"
+                        )
+                        await _emit(
+                            "连续工具失败，控制器要求停止重复尝试并提交可用结论。"
+                            if zh_progress
+                            else "Repeated tool failures detected; finalizing with available evidence."
                         )
                         continue
                     if (
@@ -458,6 +488,11 @@ class SubAgentExecutor:
                             f"[{agent_role}] 搜索预算触发强制收口: "
                             f"search_calls={search_tool_calls}/{_MAX_SEARCH_TOOL_CALLS}, "
                             f"blocked_by_controller={blocked_by_controller}"
+                        )
+                        await _emit(
+                            "搜索预算已用尽，控制器要求收口。"
+                            if zh_progress
+                            else "Search budget exhausted; finalizing."
                         )
                         continue
 
@@ -489,6 +524,11 @@ class SubAgentExecutor:
                         logger.info(
                             f"[{agent_role}] 任务完成，deliverable 长度={len(deliverable)}, tokens={total_tokens}"
                         )
+                        await _emit(
+                            f"已生成交付内容，长度 {len(deliverable)}。"
+                            if zh_progress
+                            else f"Deliverable generated, length {len(deliverable)}."
+                        )
                         await _emit("正在提交交付结果..." if zh_progress else "Submitting deliverable...")
                         return {"status": "completed", "deliverable": deliverable, "tokens": total_tokens}
 
@@ -502,6 +542,11 @@ class SubAgentExecutor:
                     return {"status": "blocked", "blocker_reason": reason, "tokens": total_tokens}
 
             logger.error(f"[{agent_role}] 超过最大 ReAct 步数 {MAX_REACT_STEPS}，强制阻塞")
+            await _emit(
+                f"超过最大执行步数 {MAX_REACT_STEPS}，停止本步骤。"
+                if zh_progress
+                else f"Exceeded the maximum execution step limit ({MAX_REACT_STEPS}); stopping this step."
+            )
             return {
                 "status": "blocked",
                 "blocker_reason": (

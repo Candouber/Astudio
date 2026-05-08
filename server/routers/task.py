@@ -181,6 +181,13 @@ def _none_text(source_text: str) -> str:
     return "无" if is_chinese(source_text) else "None"
 
 
+def _preferred_iteration_studio_id(task: Task) -> str | None:
+    studio_id = task.plan_studio_id or task.studio_id
+    if studio_id and studio_id != "studio_0":
+        return studio_id
+    return None
+
+
 router = APIRouter()
 task_store = TaskStore()
 studio_store = StudioStore()
@@ -1372,9 +1379,9 @@ async def _run_employee_with_review(
             await task_store.update_sub_task_status(sub_task_id, "running")
 
             async def _progress(msg: str) -> None:
-                # 把模型的"我现在在做什么"实时透传到 UI 节点上
-                # 仅截取前 120 字符，避免污染最终 deliverable 长度
+                # Store only short execution summaries for the UI trace; do not expose raw model reasoning.
                 try:
+                    await task_store.append_node_trace(ui_node_id, f"[{emp_role}] {msg}")
                     await task_store.update_node_status(
                         ui_node_id, "running", f"[{emp_role}] {msg[:120]}"
                     )
@@ -1399,6 +1406,12 @@ async def _run_employee_with_review(
             deliverable = res.get("deliverable", "")
             await task_store.update_sub_task_review(sub_task_id, "pending_review")
             review_label = "复核中" if is_chinese(original_spec or input_ctx) else "Reviewing"
+            review_trace = (
+                f"[{emp_role}] {review_label}: Leader 正在检查交付质量"
+                if is_chinese(original_spec or input_ctx)
+                else f"[{emp_role}] {review_label}: Leader is checking delivery quality"
+            )
+            await task_store.append_node_trace(ui_node_id, review_trace)
             await task_store.update_node_status(ui_node_id, "running", f"[{review_label}] {deliverable[:80]}...")
 
             review = await studio_leader.review_sub_task(studio_id, step_lab, original_spec, deliverable)
@@ -1412,6 +1425,10 @@ async def _run_employee_with_review(
                 extra_feedback = review["feedback"]
                 await task_store.update_sub_task_review(sub_task_id, "revision_requested", extra_feedback)
                 revision_label = "需要修改" if is_chinese(original_spec or input_ctx) else "Revision requested"
+                await task_store.append_node_trace(
+                    ui_node_id,
+                    f"[{emp_role}] {revision_label}: {extra_feedback[:160]}",
+                )
                 await task_store.update_node_status(ui_node_id, "running", f"[{revision_label}] {extra_feedback[:80]}")
                 attempt += 1
         else:
@@ -1630,7 +1647,7 @@ async def task_stream_view(task_id: str, request: Request):
         pause_event_sent = False
         # 同时跟踪 status 和 output，任意一个变化都推 node_updated，
         # 让前端能实时看到模型在做什么（ReAct 步骤 / 质检阶段等）
-        sent_node_signature: dict[str, tuple[str, str]] = {}
+        sent_node_signature: dict[str, tuple[str, str, str]] = {}
         # 心跳间隔（秒）：每隔一段时间无论有没有变化，都推一次 heartbeat，
         # 让前端能识别"服务端还活着"，并据此判断节点是否疑似卡死
         HEARTBEAT_INTERVAL_S = 3.0
@@ -1670,15 +1687,25 @@ async def task_stream_view(task_id: str, request: Request):
             if len(t.nodes) > last_nodes_len:
                 for n in t.nodes[last_nodes_len:]:
                     yield {"event": "node_added", "data": json.dumps(n.model_dump(), default=_json_serial)}
-                    sent_node_signature[n.id] = (n.status, n.output or "")
+                    sent_node_signature[n.id] = (
+                        n.status,
+                        n.output or "",
+                        json.dumps(n.trace or [], ensure_ascii=False),
+                    )
                 last_nodes_len = len(t.nodes)
 
             for n in t.nodes:
-                sig = (n.status, n.output or "")
+                trace_sig = json.dumps(n.trace or [], ensure_ascii=False)
+                sig = (n.status, n.output or "", trace_sig)
                 prev = sent_node_signature.get(n.id)
                 if sig != prev:
                     yield {"event": "node_updated", "data": json.dumps(
-                        {"node_id": n.id, "status": n.status, "output": n.output},
+                        {
+                            "node_id": n.id,
+                            "status": n.status,
+                            "output": n.output,
+                            "trace": n.trace,
+                        },
                         default=_json_serial
                     )}
                     sent_node_signature[n.id] = sig
@@ -2080,13 +2107,17 @@ async def iterate_selection(task_id: str, payload: dict):
         f"{chr(10).join(sub_task_context) if sub_task_context else ('无步骤摘要。' if zh_iter else 'No step summaries.')}\n\n"
         f"## Full Context Containing the Current Segment\n{node_context or ('无完整上下文。' if zh_iter else 'No full context available.')}\n\n"
         "## Studio and Sandbox Strategy\n"
-        "For this round, let Agent Zero reevaluate the suitable studio path based on the new request. "
-        "Do not mechanically reuse the previous studio only for historical consistency.\n"
+        "This is an iteration of the same task, so keep the current business studio by default. "
+        "Do not route this iteration to Studio 0 or system management merely because the context mentions "
+        "task, sandbox, code, files, or frontend artifacts. Only use Studio 0 when the user's new request "
+        "explicitly asks to change AStudio itself, system settings, skills, providers, scheduler, or platform configuration.\n"
         "This iteration is still the **same task** (same task_id). The sandbox, tool runtime environment, "
-        "existing code, and frontend artifacts are bound to this task. Iterate on top of the original sandbox "
+        "existing files, and generated artifacts are bound to this task. Iterate on top of the original sandbox "
         "and existing artifacts. Do not create a disconnected sandbox or parallel environment.\n\n"
         "Plan only the necessary incremental steps around the current task and selected segment. Do not rebuild from scratch by default."
     )
+
+    preferred_studio_id = _preferred_iteration_studio_id(task)
 
     await task_store.begin_iteration(
         task_id,
@@ -2096,15 +2127,14 @@ async def iterate_selection(task_id: str, payload: dict):
     )
     await task_store.update_task_status(task_id, "planning")
     await task_store.set_phase(task_id, "routing", enc("backendTaskStatus.agent0_replan_iteration"))
-    # 不传 preferred_studio_id：与「基于结果迭代」一致，由 Agent0 重新路由；沙箱仍属当前 task
     await _schedule_ask_pipeline(
         task_id,
         iteration_goal,
-        preferred_studio_id=None,
+        preferred_studio_id=preferred_studio_id,
     )
 
     logger.info(
-        f"[Task {task_id}] 在原任务内发起选区迭代 from node={node_id} (Agent0 路由，无 preferred_studio)"
+        f"[Task {task_id}] 在原任务内发起选区迭代 from node={node_id} preferred_studio={preferred_studio_id or 'auto'}"
     )
     return {
         "status": "ok",
@@ -2179,15 +2209,18 @@ async def iterate_task(task_id: str, payload: dict):
         f"{chr(10).join(sub_task_context) if sub_task_context else ('无步骤摘要。' if zh_iter else 'No step summaries.')}\n\n"
         f"## Current Synthesis Result\n{synthesis or ('暂无最终汇总。' if zh_iter else 'No synthesis result yet.')}\n\n"
         "## Studio and Sandbox Strategy\n"
-        "For this round, let Agent Zero reevaluate the suitable studio path based on the new request. "
-        "Do not mechanically reuse the previous studio only for historical consistency.\n"
+        "This is an iteration of the same task, so keep the current business studio by default. "
+        "Do not route this iteration to Studio 0 or system management merely because the context mentions "
+        "task, sandbox, code, files, or frontend artifacts. Only use Studio 0 when the user's new request "
+        "explicitly asks to change AStudio itself, system settings, skills, providers, scheduler, or platform configuration.\n"
         "This iteration is still the **same task** (same task_id). The sandbox, tool runtime environment, "
-        "existing code, and frontend artifacts are bound to this task. Iterate on top of the original sandbox "
+        "existing files, and generated artifacts are bound to this task. Iterate on top of the original sandbox "
         "and existing artifacts. Do not create a disconnected sandbox or parallel environment.\n\n"
         "Plan only the necessary incremental steps around the current task."
     )
 
     source_node_id = root_node.id if root_node else None
+    preferred_studio_id = _preferred_iteration_studio_id(task)
     await task_store.begin_iteration(
         task_id,
         instruction=instruction,
@@ -2196,11 +2229,13 @@ async def iterate_task(task_id: str, payload: dict):
     )
     await task_store.update_task_status(task_id, "planning")
     await task_store.set_phase(task_id, "routing", enc("backendTaskStatus.agent0_iterate_from_result"))
-    # 不传 preferred_studio_id：不复用上一轮 studio 路由绑死；沙箱仍为当前 task（见 sandbox_owner_*）
     await _schedule_ask_pipeline(
         task_id,
         iteration_goal,
-        preferred_studio_id=None,
+        preferred_studio_id=preferred_studio_id,
+    )
+    logger.info(
+        f"[Task {task_id}] 在原任务内发起结果迭代 preferred_studio={preferred_studio_id or 'auto'}"
     )
     return {"status": "ok", "task_id": task_id, "message": "已在当前任务内发起结果迭代"}
 
@@ -2349,13 +2384,18 @@ async def recover_interrupted_executions() -> None:
 
     try:
         cursor = await db.execute(
-            "SELECT id, status FROM tasks WHERE status IN ('planning', 'executing')"
+            "SELECT id, status, question FROM tasks WHERE status IN ('planning', 'executing')"
         )
         rows = await cursor.fetchall()
         for row in rows:
             tid = row["id"]
             old_status = row["status"]
-            reason = enc("backendTaskStatus.recovery_terminated")
+            status_message = enc("backendTaskStatus.recovery_terminated")
+            reason = (
+                "服务重启前任务仍在运行，执行上下文已丢失，已自动终止。"
+                if is_chinese(row["question"] or "")
+                else "The service restarted while this task was running; execution context was lost and the task was terminated."
+            )
             await db.execute(
                 """UPDATE tasks
                    SET status='terminated',
@@ -2366,7 +2406,7 @@ async def recover_interrupted_executions() -> None:
                        last_activity_at=?
                    WHERE id=?""",
                 (
-                    reason, reason,
+                    reason, status_message,
                     datetime.now().isoformat(),
                     datetime.now().isoformat(),
                     datetime.now().isoformat(),

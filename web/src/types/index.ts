@@ -48,6 +48,7 @@ export interface PathNode {
   status: 'pending' | 'running' | 'completed' | 'error' | 'corrected' | 'deprecated';
   deep_dives: DeepDive[];
   distilled_summary: string;
+  trace?: string[];
   parent_id?: string;
   position: { x: number; y: number };
 }

@@ -116,7 +116,7 @@ interface TaskState {
   updateTaskStatus: (status: TaskStatus) => void
   addNode: (node: PathNode) => void
   addEdge: (edge: PathEdge) => void
-  updateNodeStatus: (nodeId: string, status: PathNode['status'], output?: string) => void
+  updateNodeStatus: (nodeId: string, status: PathNode['status'], output?: string, trace?: string[]) => void
   updateNodeSummary: (nodeId: string, summary: string) => void
   appendStreamChunk: (nodeId: string, chunk: string) => void
   selectNode: (nodeId: string | null) => void
@@ -279,10 +279,15 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     edges: [...state.edges, edge],
   })),
 
-  updateNodeStatus: (nodeId, status, output) => set((state) => ({
+  updateNodeStatus: (nodeId, status, output, trace) => set((state) => ({
     nodes: state.nodes.map(n =>
       n.id === nodeId
-        ? { ...n, status, ...(output !== undefined ? { output } : {}) }
+        ? {
+            ...n,
+            status,
+            ...(output !== undefined ? { output } : {}),
+            ...(trace !== undefined ? { trace } : {}),
+          }
         : n
     ),
   })),

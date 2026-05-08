@@ -78,6 +78,7 @@ const en: TranslationTree = {
     briefing: 'Brief',
     skipReason: 'Skip reason',
     blockReason: 'Blocked reason',
+    traceTitle: 'Execution trace',
     outputTitle: 'Output',
     rerunCompleted: 'Rerun step (updates downstream)',
     rerunBlocked: 'Add context and retry',
