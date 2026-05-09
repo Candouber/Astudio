@@ -1,6 +1,6 @@
 .ann-popover {
   width: 380px;
-  max-height: 420px;
+  max-height: min(620px, calc(100vh - 24px));
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
@@ -23,6 +23,15 @@
   padding: 10px 14px;
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
+}
+
+.ann-popover__header--draggable {
+  cursor: grab;
+  user-select: none;
+}
+
+.ann-popover__header--draggable:active {
+  cursor: grabbing;
 }
 
 .ann-popover__title {
@@ -157,10 +166,64 @@
   margin-top: 12px;
 }
 
+.ann-popover__answer--followup {
+  margin: 8px 0 0;
+  max-height: 160px;
+}
+
 .ann-popover__result-line {
   margin: 0;
   color: var(--text-secondary);
   line-height: 1.6;
+}
+
+.ann-popover__followup {
+  padding: 0 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.ann-popover__followup-input {
+  width: 100%;
+  min-width: 0;
+  resize: vertical;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  padding: 9px 10px;
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  box-sizing: border-box;
+}
+
+.ann-popover__followup-input::placeholder {
+  color: var(--text-muted);
+}
+
+.ann-popover__followup-input:focus {
+  outline: none;
+  border-color: var(--accent-brand);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
+.ann-popover__followup-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ann-popover__saved {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 0.76rem;
 }
 
 .ann-popover__no-answer {

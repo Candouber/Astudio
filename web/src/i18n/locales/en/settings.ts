@@ -81,6 +81,15 @@ const en: TranslationTree = {
     modalTitle: 'Settings',
     tabProviders: 'Model providers',
     tabRouting: 'Role routing',
+    tabAdvanced: 'Advanced',
+    advancedIntro:
+      'Tune worker-agent loop and search budgets. Higher values give complex tasks more room, but can increase latency and cost.',
+    maxReactSteps: 'Worker max steps',
+    maxReactStepsHelp:
+      'Maximum reasoning/tool/finalization turns for one worker sub-task. Default is 30.',
+    maxSearchToolCalls: 'Search tool limit',
+    maxSearchToolCallsHelp:
+      'Maximum web_search / browser_search calls for one worker sub-task. Set to 0 to disable search.',
     saveConfig: 'Save',
     savingConfig: 'Saving…',
     providerNameLabel: 'Provider name',

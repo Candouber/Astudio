@@ -5,6 +5,7 @@ import type { Task, TaskStatus } from '../types'
 import { getTaskStatusLabel } from '../utils/taskStatus'
 import { useI18n } from '../i18n/useI18n'
 import { Clock, CheckCircle, AlertTriangle, Play, FileSearch, Loader, Trash2, X } from 'lucide-react'
+import { getTaskDisplayTitle } from '../utils/taskTitle'
 import './TaskBoard.css'
 
 const STATUS_GROUPS: {
@@ -121,14 +122,6 @@ export default function TaskBoard() {
   )
 }
 
-/** Strip studio prefix from title (zh/en); truncate */
-function extractTitle(question: string): string {
-  const clean = question
-    .replace(/^\[(?:目标工作室：|Target studio:)[^\]]+\]\s*/, '')
-    .trim()
-  return clean.length > 60 ? `${clean.slice(0, 60)}…` : clean
-}
-
 function TaskRow({
   task,
   onNavigate,
@@ -142,6 +135,7 @@ function TaskRow({
   const [confirming, setConfirming] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const needsClarification = task.status === 'need_clarification'
+  const displayTitle = getTaskDisplayTitle(task)
 
   const handleDeleteClick = (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -167,7 +161,7 @@ function TaskRow({
       onClick={confirming ? undefined : onNavigate}
     >
       <div className="task-row__header">
-        <div className="task-row__question">{extractTitle(task.question)}</div>
+        <div className="task-row__question" title={displayTitle}>{displayTitle}</div>
         {!confirming && (
           <button
             type="button"

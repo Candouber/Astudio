@@ -174,6 +174,7 @@ class TaskStore:
                 sandbox_owner_id=task_data.get("sandbox_owner_id") or task_data["id"],
                 studio_id=task_data.get("studio_id"),
                 question=task_data["question"],
+                subject=task_data.get("subject") or "",
                 status=self._coerce_status(task_data.get("status")),
                 nodes=nodes,
                 edges=edges,
@@ -421,12 +422,26 @@ class TaskStore:
             sandbox_owner_id=owner_id,
             studio_id=studio_id,
             question=question,
+            subject="",
             status="planning",
             phase="created",
             created_at=now,
             updated_at=now,
             last_activity_at=now,
         )
+
+    async def update_subject(self, task_id: str, subject: str) -> Optional[Task]:
+        db = await get_db()
+        try:
+            now = datetime.now().isoformat()
+            await db.execute(
+                "UPDATE tasks SET subject = ?, updated_at = ?, last_activity_at = ? WHERE id = ?",
+                (subject.strip(), now, now, task_id),
+            )
+            await db.commit()
+        finally:
+            await db.close()
+        return await self.get(task_id)
 
     async def add_node(self, task_id: str, node: PathNode) -> PathNode:
         """添加路径节点"""
@@ -789,6 +804,7 @@ class TaskStore:
             sandbox_owner_id=row.get("sandbox_owner_id") or row["id"],
             studio_id=row.get("studio_id"),
             question=row["question"],
+            subject=row.get("subject") or "",
             status=cls._coerce_status(row.get("status")),
             phase=row.get("phase") or "created",
             created_at=row.get("created_at", datetime.now()),
@@ -1061,14 +1077,26 @@ class TaskStore:
 
     async def create_annotation(
         self, ann_id: str, task_id: str, node_id: str,
-        selected_text: str, question: str,
+        selected_text: str, question: str, parent_annotation_id: str | None = None,
+        target_type: str = "node", target_id: str | None = None,
     ) -> None:
         db = await get_db()
         try:
             await db.execute(
-                "INSERT INTO annotations (id, task_id, node_id, selected_text, question, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (ann_id, task_id, node_id, selected_text, question, datetime.now().isoformat()),
+                "INSERT INTO annotations "
+                "(id, task_id, node_id, selected_text, question, parent_annotation_id, target_type, target_id, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    ann_id,
+                    task_id,
+                    node_id,
+                    selected_text,
+                    question,
+                    parent_annotation_id,
+                    target_type,
+                    target_id or node_id,
+                    datetime.now().isoformat(),
+                ),
             )
             await db.commit()
         finally:
@@ -1090,7 +1118,16 @@ class TaskStore:
                 (task_id,),
             )
             rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return [self._normalize_annotation_row(dict(r)) for r in rows]
+        finally:
+            await db.close()
+
+    async def get_annotation(self, ann_id: str) -> dict | None:
+        db = await get_db()
+        try:
+            cursor = await db.execute("SELECT * FROM annotations WHERE id = ?", (ann_id,))
+            row = await cursor.fetchone()
+            return self._normalize_annotation_row(dict(row)) if row else None
         finally:
             await db.close()
 
@@ -1101,3 +1138,27 @@ class TaskStore:
             await db.commit()
         finally:
             await db.close()
+
+    @staticmethod
+    def _normalize_annotation_row(row: dict) -> dict:
+        target_type = (row.get("target_type") or "").strip()
+        target_id = (row.get("target_id") or "").strip()
+        node_id = row.get("node_id") or ""
+        parent_annotation_id = row.get("parent_annotation_id")
+        if not target_type:
+            if parent_annotation_id:
+                target_type = "annotation"
+            elif node_id.startswith("__output__:"):
+                target_type = "output"
+            else:
+                target_type = "node"
+        if not target_id:
+            if target_type == "annotation":
+                target_id = parent_annotation_id or node_id
+            elif target_type == "output" and node_id.startswith("__output__:"):
+                target_id = node_id[len("__output__:"):]
+            else:
+                target_id = node_id
+        row["target_type"] = target_type
+        row["target_id"] = target_id
+        return row

@@ -106,6 +106,12 @@ DEFAULT_SKILLS = [
         "category": "沙箱",
     },
     {
+        "slug": "sandbox_import_path",
+        "name": "导入外部路径",
+        "description": "把用户指定的沙箱外本地文件或目录复制到当前任务沙箱的 imports/ 下，后续基于沙箱内副本读取和分析。",
+        "category": "沙箱",
+    },
+    {
         "slug": "sandbox_run_command",
         "name": "终端命令",
         "description": "像 terminal/bash 一样在当前任务沙箱内运行 shell 命令。适合执行 CLI、构建、测试、浏览器自动化和本地服务启动。",

@@ -207,6 +207,15 @@ async def get_task(task_id: str) -> Task:
     return task
 
 
+@router.put("/{task_id}/subject")
+async def update_task_subject(task_id: str, payload: dict) -> Task:
+    subject = str(payload.get("subject") or "").strip()
+    task = await task_store.update_subject(task_id, subject)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return task
+
+
 @router.delete("/{task_id}", status_code=204)
 async def delete_task(task_id: str):
     ok = await task_store.delete(task_id)
@@ -1841,13 +1850,39 @@ async def annotate(task_id: str, payload: dict):
 
     root_node = next((n for n in task.nodes if n.type == "agent_zero"), None)
     target_node = next((n for n in task.nodes if n.id == node_id), None)
+    storage_node_id = node_id
+    target_type = "node"
+    target_id = node_id
+    parent_annotation_id = None
     if node_id.startswith(OUTPUT_NODE_PREFIX):
         output_path = node_id[len(OUTPUT_NODE_PREFIX):]
+        if not root_node:
+            raise HTTPException(400, "当前任务没有可关联的结果节点")
         node_context = await _read_output_annotation_context(task_id, output_path)
         node_role = "Output file"
         node_label = output_path
+        storage_node_id = root_node.id
+        target_type = "output"
+        target_id = output_path
+    elif node_id.startswith("annotation:"):
+        parent_ann_id = node_id[len("annotation:"):]
+        parent_ann = await task_store.get_annotation(parent_ann_id)
+        if not parent_ann or parent_ann.get("task_id") != task_id:
+            raise HTTPException(404, "批注不存在")
+        node_context = (
+            f"Selected text:\n{parent_ann.get('selected_text') or ''}\n\n"
+            f"Question:\n{parent_ann.get('question') or ''}\n\n"
+            f"Answer:\n{parent_ann.get('answer') or ''}"
+        )
+        node_role = "Annotation thread"
+        node_label = parent_ann.get("question") or parent_ann_id
+        parent_annotation_id = parent_ann_id
+        storage_node_id = parent_ann.get("node_id") or (root_node.id if root_node else "")
+        target_type = "annotation"
+        target_id = parent_ann_id
     elif node_id == "__synthesis__" and root_node:
-        node_id = root_node.id
+        storage_node_id = root_node.id
+        target_id = root_node.id
         target_node = root_node
         node_context = root_node.output or ""
         node_role = root_node.agent_role or "Agent0"
@@ -1858,7 +1893,16 @@ async def annotate(task_id: str, payload: dict):
         node_label = target_node.step_label if target_node else ""
 
     ann_id = uuid.uuid4().hex[:12]
-    await task_store.create_annotation(ann_id, task_id, node_id, selected_text, question)
+    await task_store.create_annotation(
+        ann_id,
+        task_id,
+        storage_node_id,
+        selected_text,
+        question,
+        parent_annotation_id=parent_annotation_id,
+        target_type=target_type,
+        target_id=target_id,
+    )
 
     async def event_generator():
         from services.llm_service import llm_service

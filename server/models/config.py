@@ -122,11 +122,18 @@ class WebSearchConfig(BaseModel):
     proxy: Optional[str] = None
 
 
+class AdvancedConfig(BaseModel):
+    """高级执行配置"""
+    max_react_steps: int = Field(default=30, ge=1, le=100)
+    max_search_tool_calls: int = Field(default=4, ge=0, le=50)
+
+
 class AppConfig(BaseModel):
     """应用配置"""
     llm_providers: list[LLMProvider] = Field(default_factory=get_default_providers)
     model_assignment: ModelAssignment = Field(default_factory=ModelAssignment)
     web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
+    advanced: AdvancedConfig = Field(default_factory=AdvancedConfig)
 
 
 def _coerce_role_model_config(raw: object, fallback_model: str) -> RoleModelConfig:
@@ -309,6 +316,7 @@ def normalize_config(config: AppConfig) -> AppConfig:
             ),
         ),
         web_search=config.web_search,
+        advanced=config.advanced,
     )
 
 

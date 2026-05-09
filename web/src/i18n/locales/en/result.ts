@@ -105,6 +105,9 @@ const en: TranslationTree = {
     title: 'Annotation',
     generating: 'Generating answer…',
     delete: 'Delete',
+    followUpPlaceholder: 'Ask a follow-up about this annotation…',
+    followUpSubmit: 'Ask follow-up',
+    followUpSaved: 'Saved as a child annotation',
   },
   annotationPanel: {
     title: 'Annotations',

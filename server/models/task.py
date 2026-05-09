@@ -57,6 +57,7 @@ class Task(BaseModel):
     sandbox_owner_id: Optional[str] = None
     studio_id: Optional[str] = None
     question: str
+    subject: str = ""
     nodes: list[PathNode] = Field(default_factory=list)
     edges: list[PathEdge] = Field(default_factory=list)
     sub_tasks: list[SubTask] = Field(default_factory=list)

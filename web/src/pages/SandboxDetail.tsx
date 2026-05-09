@@ -4,6 +4,7 @@ import { ArrowLeft, Eye, FileText, Folder, Loader, Maximize2, Play, RefreshCw, S
 import { api } from '../api/client'
 import type { Sandbox, SandboxFile, SandboxRun, Task } from '../types'
 import { useI18n } from '../i18n/useI18n'
+import { getTaskDisplayTitle } from '../utils/taskTitle'
 import './SandboxDetail.css'
 
 function compactText(value: string | null | undefined, limit: number) {
@@ -170,7 +171,8 @@ export default function SandboxDetail() {
   }
 
   if (!sandbox) return null
-  const displayTitle = compactText(task?.question || sandbox.description || sandbox.path, 120)
+  const taskTitle = task ? getTaskDisplayTitle(task) : ''
+  const displayTitle = compactText(taskTitle || sandbox.description || sandbox.path, 120)
 
   return (
     <div className="sandbox-detail">
@@ -180,7 +182,7 @@ export default function SandboxDetail() {
         </button>
         <div className="sandbox-detail__title">
           <span>{t('sandboxDetail.titlePrefix')} / {sandbox.id}</span>
-          <strong title={task?.question || sandbox.description || sandbox.path}>{displayTitle}</strong>
+          <strong title={taskTitle || sandbox.description || sandbox.path}>{displayTitle}</strong>
           {sandbox.dev_port && <small>{t('sandboxDetail.reservedPort')}{sandbox.dev_port}</small>}
         </div>
         <div className="sandbox-detail__actions">

@@ -1,5 +1,6 @@
 """Task sandbox API."""
 import asyncio
+import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
@@ -12,6 +13,7 @@ from tools.execution_safety import LocalExecutionBlocked, validate_local_command
 from tools.sandbox_runtime import (
     SUBPROCESS_START_KWARGS,
     build_sandbox_env,
+    find_preview_index,
     prepare_sandbox_command,
     terminate_process_tree,
 )
@@ -116,9 +118,10 @@ async def run_command(sandbox_id: str, payload: SandboxRunRequest):
 
     runs_dir = Path(sandbox.path) / ".astudio" / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
-    stdout_path = runs_dir / "pending.stdout.log"
-    stderr_path = runs_dir / "pending.stderr.log"
-    prepared_command, preview_url = prepare_sandbox_command(payload.command, sandbox)
+    temp_id = uuid.uuid4().hex[:8]
+    stdout_path = runs_dir / f"pending-{temp_id}.stdout.log"
+    stderr_path = runs_dir / f"pending-{temp_id}.stderr.log"
+    prepared_command, preview_url = prepare_sandbox_command(payload.command, sandbox, cwd)
 
     stdout_f = stdout_path.open("wb")
     stderr_f = stderr_path.open("wb")
@@ -295,8 +298,4 @@ async def stop_all_sandbox_processes() -> int:
 
 
 def _find_index_file(root: Path) -> Path | None:
-    for rel in ("index.html", "public/index.html", "dist/index.html", "build/index.html"):
-        path = root / rel
-        if path.exists() and path.is_file():
-            return path
-    return None
+    return find_preview_index(root)

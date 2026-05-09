@@ -116,6 +116,7 @@ export interface Task {
   sandbox_owner_id?: string | null;
   studio_id?: string;
   question: string;
+  subject?: string;
   nodes: PathNode[];
   edges: PathEdge[];
   sub_tasks: SubTask[];
@@ -224,6 +225,9 @@ export interface Annotation {
   id: string
   task_id: string
   node_id: string
+  parent_annotation_id?: string | null
+  target_type?: 'node' | 'output' | 'annotation' | string
+  target_id?: string | null
   selected_text: string
   question: string
   answer: string
@@ -233,6 +237,12 @@ export interface Annotation {
 export interface AppConfig {
   llm_providers: LLMProvider[];
   model_assignment: ModelAssignment;
+  advanced: AdvancedConfig;
+}
+
+export interface AdvancedConfig {
+  max_react_steps: number;
+  max_search_tool_calls: number;
 }
 
 // ── Sandbox ────────────────────────────────────────────────────────────────

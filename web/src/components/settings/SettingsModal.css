@@ -560,6 +560,60 @@
   color: var(--text-primary);
 }
 
+.advanced-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.advanced-settings__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+.advanced-setting-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  transition: border-color 0.2s ease;
+}
+
+.advanced-setting-card:hover {
+  border-color: var(--border-color-hover);
+}
+
+.advanced-setting-card__header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.advanced-setting-card__header svg {
+  flex-shrink: 0;
+  color: var(--accent-brand);
+  margin-top: 2px;
+}
+
+.advanced-setting-card__header label {
+  display: block;
+  color: var(--text-primary);
+  font-size: 0.92rem;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.advanced-setting-card__header p {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.45;
+  margin: 0;
+}
+
 @media (max-width: 720px) {
   .routing-role-card__header {
     flex-wrap: wrap;

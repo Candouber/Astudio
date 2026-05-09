@@ -7,17 +7,19 @@ from loguru import logger
 from agents.context import ContextBuilder
 from services.attachments import task_has_attachments
 from services.llm_service import llm_service
+from storage.config_store import ConfigStore
 from tools.context import ToolContext, reset_current_tool_context, set_current_tool_context
 from tools.executor import execute_tool
 from tools.registry import build_tool_schemas
 from utils.language import is_chinese, response_language_instruction
 
-MAX_REACT_STEPS = 20
+DEFAULT_MAX_REACT_STEPS = 30
 _TOOL_RESULT_MAX_CHARS = 12_000
 _MAX_NO_TOOL_STREAK = 2
 _MAX_CONSECUTIVE_TOOL_FAILURES = 2
 _SEARCH_TOOL_NAMES = {"web_search", "browser_search"}
-_MAX_SEARCH_TOOL_CALLS = 4
+_SERIAL_TOOL_NAMES = {"sandbox_run_command"}
+DEFAULT_MAX_SEARCH_TOOL_CALLS = 4
 _MAX_REPEATED_SEARCH_QUERY_CALLS = 1
 _FAILURE_PREFIXES = (
     "[Search failed]",
@@ -34,6 +36,7 @@ _TASK_SANDBOX_HELPERS = [
     "sandbox_list_files",
     "sandbox_read_file",
     "sandbox_write_file",
+    "sandbox_import_path",
     "sandbox_run_command",
     "sandbox_start_preview",
 ]
@@ -153,6 +156,16 @@ def _controller_observation(tool_name: str, reason: str) -> tuple[str, bool]:
     return json.dumps(payload, ensure_ascii=False), True
 
 
+async def _load_execution_limits() -> tuple[int, int]:
+    try:
+        config = await ConfigStore().load()
+        advanced = config.advanced
+        return advanced.max_react_steps, advanced.max_search_tool_calls
+    except Exception as e:
+        logger.warning(f"[sub_agent] 读取高级执行配置失败，使用默认值: {e}")
+        return DEFAULT_MAX_REACT_STEPS, DEFAULT_MAX_SEARCH_TOOL_CALLS
+
+
 class SubAgentExecutor:
     async def run(
         self,
@@ -178,6 +191,7 @@ class SubAgentExecutor:
             )
 
         try:
+            max_react_steps, max_search_tool_calls = await _load_execution_limits()
             effective_tools = list(available_tools or [])
             if "web_search" in effective_tools and "browser_search" not in effective_tools:
                 effective_tools.append("browser_search")
@@ -233,11 +247,11 @@ class SubAgentExecutor:
                 except Exception as cb_err:
                     logger.debug(f"[{agent_role}] progress_callback 失败（忽略）: {cb_err}")
 
-            for step in range(MAX_REACT_STEPS):
+            for step in range(max_react_steps):
                 logger.info(
-                    f"[{agent_role}] ReAct step {step + 1}/{MAX_REACT_STEPS} "
+                    f"[{agent_role}] ReAct step {step + 1}/{max_react_steps} "
                     f"force_finalization={force_finalization} "
-                    f"search_calls={search_tool_calls}/{_MAX_SEARCH_TOOL_CALLS} "
+                    f"search_calls={search_tool_calls}/{max_search_tool_calls} "
                     f"tool_failures={consecutive_tool_failures}"
                 )
                 current_tools = protocol_tools if force_finalization else tools
@@ -360,10 +374,10 @@ class SubAgentExecutor:
                         if tool_name in _SEARCH_TOOL_NAMES:
                             normalized_query = _normalize_search_query(args)
                             query_count = search_query_counts.get(normalized_query, 0)
-                            if search_tool_calls >= _MAX_SEARCH_TOOL_CALLS:
+                            if search_tool_calls >= max_search_tool_calls:
                                 reason = (
                                     f"Search budget exhausted "
-                                    f"({_MAX_SEARCH_TOOL_CALLS} calls). Query was: {normalized_query!r}."
+                                    f"({max_search_tool_calls} calls). Query was: {normalized_query!r}."
                                 )
                                 controller_result = _controller_observation(tool_name, reason)
                             elif normalized_query and query_count >= _MAX_REPEATED_SEARCH_QUERY_CALLS:
@@ -381,7 +395,7 @@ class SubAgentExecutor:
                                 f"[{agent_role}] search_tool_call step={step + 1} "
                                 f"name={tool_name} query={normalized_query!r} "
                                 f"allowed={controller_result is None} "
-                                f"budget={search_tool_calls}/{_MAX_SEARCH_TOOL_CALLS} "
+                                f"budget={search_tool_calls}/{max_search_tool_calls} "
                                 f"query_count={search_query_counts.get(normalized_query, 0)}"
                             )
                             if controller_result is not None:
@@ -418,10 +432,15 @@ class SubAgentExecutor:
                         )
                         return tc, observation, failed
 
-                    tool_results = await asyncio.gather(*[
-                        _exec(tc, args, controller_result)
-                        for tc, args, controller_result in prepared_calls
-                    ])
+                    if any(tc.function.name in _SERIAL_TOOL_NAMES for tc, _, _ in prepared_calls):
+                        tool_results = []
+                        for tc, args, controller_result in prepared_calls:
+                            tool_results.append(await _exec(tc, args, controller_result))
+                    else:
+                        tool_results = await asyncio.gather(*[
+                            _exec(tc, args, controller_result)
+                            for tc, args, controller_result in prepared_calls
+                        ])
                     await _emit(
                         f"正在处理工具结果: {tool_summary}..."
                         if zh_progress
@@ -473,7 +492,7 @@ class SubAgentExecutor:
                         continue
                     if (
                         not protocol_calls
-                        and (blocked_by_controller or search_tool_calls >= _MAX_SEARCH_TOOL_CALLS)
+                        and (blocked_by_controller or search_tool_calls >= max_search_tool_calls)
                     ):
                         force_finalization = True
                         finalization_reason = (
@@ -486,7 +505,7 @@ class SubAgentExecutor:
                         )
                         logger.warning(
                             f"[{agent_role}] 搜索预算触发强制收口: "
-                            f"search_calls={search_tool_calls}/{_MAX_SEARCH_TOOL_CALLS}, "
+                            f"search_calls={search_tool_calls}/{max_search_tool_calls}, "
                             f"blocked_by_controller={blocked_by_controller}"
                         )
                         await _emit(
@@ -541,22 +560,22 @@ class SubAgentExecutor:
                     )
                     return {"status": "blocked", "blocker_reason": reason, "tokens": total_tokens}
 
-            logger.error(f"[{agent_role}] 超过最大 ReAct 步数 {MAX_REACT_STEPS}，强制阻塞")
+            logger.error(f"[{agent_role}] 超过最大 ReAct 步数 {max_react_steps}，强制阻塞")
             await _emit(
-                f"超过最大执行步数 {MAX_REACT_STEPS}，停止本步骤。"
+                f"超过最大执行步数 {max_react_steps}，停止本步骤。"
                 if zh_progress
-                else f"Exceeded the maximum execution step limit ({MAX_REACT_STEPS}); stopping this step."
+                else f"Exceeded the maximum execution step limit ({max_react_steps}); stopping this step."
             )
             return {
                 "status": "blocked",
                 "blocker_reason": (
                     (
-                        f"执行超过最大步骤限制（{MAX_REACT_STEPS} 步）。"
+                        f"执行超过最大步骤限制（{max_react_steps} 步）。"
                         "请让 Leader 拆分任务或提供更清晰的指令。"
                     )
                     if is_chinese(leader_input)
                     else (
-                        f"Execution exceeded the maximum step limit ({MAX_REACT_STEPS} steps). "
+                        f"Execution exceeded the maximum step limit ({max_react_steps} steps). "
                         "Ask the Leader to split the task or provide clearer instructions."
                     )
                 ),

@@ -105,6 +105,9 @@ const zh: TranslationTree = {
     title: '批注详情',
     generating: '回答生成中…',
     delete: '删除',
+    followUpPlaceholder: '继续追问这条批注…',
+    followUpSubmit: '继续提问',
+    followUpSaved: '已保存为子批注',
   },
   annotationPanel: {
     title: '批注与对话',

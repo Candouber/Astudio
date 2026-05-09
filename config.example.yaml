@@ -112,3 +112,10 @@ web_search:
   max_results: 5
   # Optional HTTP/SOCKS proxy, for example: http://127.0.0.1:7890
   proxy: null
+
+advanced:
+  # Maximum reasoning/tool/finalization turns for one worker sub-task.
+  max_react_steps: 30
+  # Maximum web_search / browser_search calls for one worker sub-task.
+  # Set to 0 to disable search for worker agents.
+  max_search_tool_calls: 4

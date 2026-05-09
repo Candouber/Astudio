@@ -1,19 +1,51 @@
 """Task sandbox tools bound to the current ToolContext."""
 import asyncio
+import hashlib
+import re
+import shutil
+import uuid
 from pathlib import Path
 
 from storage.sandbox_store import SandboxStore
 from tools.context import get_current_tool_context
 from tools.execution_safety import LocalExecutionBlocked, validate_local_command
 from tools.sandbox_runtime import (
+    PREVIEW_INDEX_CANDIDATES,
     SUBPROCESS_START_KWARGS,
     build_sandbox_env,
+    find_preview_index,
     prepare_sandbox_command,
     terminate_process_tree,
 )
 
 MAX_TOOL_READ_CHARS = 20_000
 MAX_TOOL_OUTPUT_CHARS = 12_000
+IMPORT_IGNORE_NAMES = {
+    ".git",
+    ".hg",
+    ".svn",
+    ".DS_Store",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".venv",
+    "venv",
+    "node_modules",
+    "target",
+    "dist",
+    ".next",
+    ".turbo",
+}
+SENSITIVE_SOURCE_MARKERS = (
+    "/.ssh",
+    "/.aws/credentials",
+    "/.config/gh/hosts.yml",
+    "/.netrc",
+)
+LOCAL_ABSOLUTE_PATH_PATTERN = re.compile(
+    r"(?<![\w:])/(Users|Volumes|private|tmp|var)/[^\s'\"`|;&)]*"
+)
 
 sandbox_store = SandboxStore()
 
@@ -56,12 +88,71 @@ async def sandbox_write_file(path: str, content: str) -> str:
     return f"[Write succeeded] {path} ({target.stat().st_size} bytes)"
 
 
+async def sandbox_import_path(source_path: str, destination_name: str = "") -> str:
+    context = get_current_tool_context()
+    sandbox, _ = await sandbox_store.ensure_for_task(context.task_id)
+    source = Path(source_path).expanduser().resolve()
+    if not source.exists():
+        return f"[Error] Source path does not exist: {source_path}"
+    lowered = source.as_posix().lower()
+    for marker in SENSITIVE_SOURCE_MARKERS:
+        if marker in lowered:
+            return f"[Safety blocked] Source path looks sensitive: {marker}"
+    if source.is_symlink():
+        return "[Safety blocked] Source path is a symlink. Import the real target path explicitly if appropriate."
+
+    base_name = _safe_import_name(destination_name or source.name or "external")
+    digest = hashlib.sha256(source.as_posix().encode("utf-8")).hexdigest()[:8]
+    import_root = sandbox_store.safe_path(sandbox, "imports")
+    import_root.mkdir(parents=True, exist_ok=True)
+    destination = sandbox_store.safe_path(sandbox, f"imports/{base_name}-{digest}")
+    if destination.exists():
+        if destination.is_dir():
+            shutil.rmtree(destination)
+        else:
+            destination.unlink()
+
+    ignored: list[str] = []
+
+    def _ignore(_dir: str, names: list[str]) -> set[str]:
+        skipped = {
+            name for name in names
+            if name in IMPORT_IGNORE_NAMES or (Path(_dir) / name).is_symlink()
+        }
+        ignored.extend(sorted(skipped))
+        return skipped
+
+    if source.is_dir():
+        shutil.copytree(source, destination, ignore=_ignore, symlinks=False)
+    else:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+
+    await sandbox_store.touch(sandbox.id)
+    rel = destination.relative_to(Path(sandbox.path)).as_posix()
+    ignored_note = f"\nignored_names: {', '.join(sorted(set(ignored)))}" if ignored else ""
+    return (
+        f"[Import succeeded]\n"
+        f"source: {source}\n"
+        f"sandbox_path: {rel}\n"
+        f"Use sandbox-relative path `{rel}` for all subsequent reads, commands, and analysis."
+        f"{ignored_note}"
+    )
+
+
 async def sandbox_run_command(command: str, cwd: str = ".", timeout_seconds: int = 60) -> str:
     context = get_current_tool_context()
     sandbox, _ = await sandbox_store.ensure_for_task(context.task_id)
     sandbox = await sandbox_store.ensure_dev_port(sandbox)
     if not command.strip():
         return "[Error] Command cannot be empty."
+    external_path = _find_external_local_path(command, Path(sandbox.path))
+    if external_path:
+        return (
+            "[Safety blocked] Command references a local path outside the task sandbox: "
+            f"{external_path}\n"
+            "Call sandbox_import_path first, then rerun the command against the returned sandbox-relative path."
+        )
     try:
         validate_local_command(command)
     except LocalExecutionBlocked as e:
@@ -73,9 +164,10 @@ async def sandbox_run_command(command: str, cwd: str = ".", timeout_seconds: int
 
     runs_dir = Path(sandbox.path) / ".astudio" / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
-    stdout_path = runs_dir / "tool.stdout.log"
-    stderr_path = runs_dir / "tool.stderr.log"
-    prepared_command, preview_url = prepare_sandbox_command(command, sandbox)
+    temp_id = uuid.uuid4().hex[:8]
+    stdout_path = runs_dir / f"tool-{temp_id}.stdout.log"
+    stderr_path = runs_dir / f"tool-{temp_id}.stderr.log"
+    prepared_command, preview_url = prepare_sandbox_command(command, sandbox, workdir)
     stdout_f = stdout_path.open("wb")
     stderr_f = stderr_path.open("wb")
     try:
@@ -140,14 +232,11 @@ async def sandbox_run_command(command: str, cwd: str = ".", timeout_seconds: int
 async def sandbox_start_preview() -> str:
     sandbox, _ = await _current_sandbox()
     root = Path(sandbox.path)
-    index = None
-    for rel in ("index.html", "public/index.html", "dist/index.html", "build/index.html"):
-        candidate = root / rel
-        if candidate.exists() and candidate.is_file():
-            index = rel
-            break
-    if not index:
-        return "[Preview failed] No index.html, public/index.html, dist/index.html, or build/index.html was found."
+    index_path = find_preview_index(root)
+    if not index_path:
+        candidates = ", ".join(PREVIEW_INDEX_CANDIDATES)
+        return f"[Preview failed] No previewable index.html was found. Checked: {candidates}."
+    index = index_path.relative_to(root).as_posix()
     preview_url = f"/api/sandboxes/{sandbox.id}/preview/{index}"
     await sandbox_store.touch(sandbox.id, preview_url=preview_url)
     return f"[Preview ready] {preview_url}"
@@ -156,6 +245,24 @@ async def sandbox_start_preview() -> str:
 async def _current_sandbox():
     context = get_current_tool_context()
     return await sandbox_store.ensure_for_task(context.task_id)
+
+
+def _safe_import_name(value: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "-" for ch in value.strip())
+    cleaned = cleaned.strip(".-")
+    return cleaned[:80] or "external"
+
+
+def _find_external_local_path(command: str, sandbox_root: Path) -> str:
+    root = sandbox_root.resolve()
+    for match in LOCAL_ABSOLUTE_PATH_PATTERN.finditer(command):
+        raw_path = match.group(0)
+        try:
+            Path(raw_path).expanduser().resolve().relative_to(root)
+            continue
+        except Exception:
+            return raw_path
+    return ""
 
 
 async def _patch_run_log_paths(run_id: str, stdout_path: str, stderr_path: str) -> None:
@@ -225,11 +332,35 @@ SANDBOX_WRITE_FILE_SCHEMA = {
     },
 }
 
+SANDBOX_IMPORT_PATH_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "sandbox_import_path",
+        "description": (
+            "Copy a user-specified local file or directory from outside the task sandbox into "
+            "the current task sandbox under imports/. Use this before reading or analyzing any "
+            "absolute external path."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "source_path": {"type": "string", "description": "Absolute or user-provided local path to import"},
+                "destination_name": {
+                    "type": "string",
+                    "description": "Optional short destination name under imports/",
+                    "default": "",
+                },
+            },
+            "required": ["source_path"],
+        },
+    },
+}
+
 SANDBOX_RUN_COMMAND_SCHEMA = {
     "type": "function",
     "function": {
         "name": "sandbox_run_command",
-        "description": "Run a command inside the current task sandbox and return stdout/stderr. Suitable for Python/Node scripts, tests, or builds.",
+        "description": "Run a command inside the current task sandbox and return stdout/stderr. If the task references an external absolute path, import it with sandbox_import_path first and run commands against the imported sandbox-relative copy.",
         "parameters": {
             "type": "object",
             "properties": {

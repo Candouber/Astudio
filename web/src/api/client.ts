@@ -89,6 +89,8 @@ export const api = {
   },
   listTasks: () => httpClient.get<Task[]>('/tasks/').then(res => res.data),
   getTask: (id: string) => httpClient.get<Task>(`/tasks/${id}`).then(res => res.data),
+  updateTaskSubject: (id: string, subject: string) =>
+    httpClient.put<Task>(`/tasks/${id}/subject`, { subject }).then(res => res.data),
   deleteTask: (id: string) => httpClient.delete(`/tasks/${id}`),
   terminateTask: (id: string) =>
     httpClient.post<{ status: string; message: string }>(`/tasks/${id}/terminate`).then(res => res.data),

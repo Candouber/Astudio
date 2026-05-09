@@ -37,6 +37,7 @@ Complete the Leader's instruction above, then report the result through a tool:
 - The first-priority actions are usually:
   - `ensure_sandbox`
   - then use `sandbox_list_files` / `sandbox_read_file` / `sandbox_write_file` / `sandbox_run_command` / `sandbox_start_preview` as needed
+- If the Leader or user instruction references an absolute local path outside the sandbox, do not read or analyze it in place. First call `sandbox_import_path` to copy that file or directory into the sandbox, then use the returned sandbox-relative path for all subsequent reads, commands, summaries, and handoff notes.
 - Do not assume files really exist. Check in the sandbox first, then run, then verify the output.
 
 ### Dependency Environment Convention (Important)

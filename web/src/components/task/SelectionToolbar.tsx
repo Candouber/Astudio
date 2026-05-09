@@ -12,11 +12,20 @@ interface SelectionPayload {
 interface Props {
   /** 限定监听区域的 CSS 选择器 */
   containerSelector: string
+  /** 在限定区域内额外排除的子区域 */
+  ignoredSelector?: string
+  enableProcess?: boolean
   onAnnotate: (payload: SelectionPayload) => void
   onProcess: (payload: SelectionPayload) => void
 }
 
-export default function SelectionToolbar({ containerSelector, onAnnotate, onProcess }: Props) {
+export default function SelectionToolbar({
+  containerSelector,
+  ignoredSelector,
+  enableProcess = true,
+  onAnnotate,
+  onProcess,
+}: Props) {
   const { t } = useI18n()
   const [visible, setVisible] = useState(false)
   const [pos, setPos] = useState({ x: 0, y: 0 })
@@ -37,14 +46,20 @@ export default function SelectionToolbar({ containerSelector, onAnnotate, onProc
 
     // 确保选区在目标容器内
     const anchor = sel.anchorNode
-    const container = document.querySelector(containerSelector)
+    const containers = Array.from(document.querySelectorAll(containerSelector))
+    const container = containers.find(item => anchor && item.contains(anchor))
     if (!container || !anchor || !container.contains(anchor)) {
+      setVisible(false)
+      return
+    }
+    const anchorEl = anchor instanceof HTMLElement ? anchor : anchor.parentElement
+    if (ignoredSelector && anchorEl?.closest(ignoredSelector)) {
       setVisible(false)
       return
     }
 
     // 寻找最近的 data-node-id（可能在 deliverable-item__content 或 synthesis 上）
-    let el = anchor instanceof HTMLElement ? anchor : anchor.parentElement
+    let el = anchorEl
     let nodeId = ''
     while (el && el !== container) {
       if (el.dataset?.nodeId) {
@@ -74,7 +89,7 @@ export default function SelectionToolbar({ containerSelector, onAnnotate, onProc
     })
     setPending({ selectedText: text, nodeId, anchorRect: rect })
     setVisible(true)
-  }, [containerSelector])
+  }, [containerSelector, ignoredSelector])
 
   const handleAnnotateClick = () => {
     if (pending) {
@@ -115,10 +130,12 @@ export default function SelectionToolbar({ containerSelector, onAnnotate, onProc
         <MessageSquarePlus size={14} />
         <span>{t('selectionToolbar.annotate')}</span>
       </button>
-      <button type="button" className="selection-toolbar__btn selection-toolbar__btn--accent" onClick={handleProcessClick}>
-        <Sparkles size={14} />
-        <span>{t('selectionToolbar.process')}</span>
-      </button>
+      {enableProcess && (
+        <button type="button" className="selection-toolbar__btn selection-toolbar__btn--accent" onClick={handleProcessClick}>
+          <Sparkles size={14} />
+          <span>{t('selectionToolbar.process')}</span>
+        </button>
+      )}
     </div>
   )
 }

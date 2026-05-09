@@ -231,6 +231,7 @@ async def init_database():
                 sandbox_owner_id TEXT,
                 studio_id TEXT,
                 question TEXT NOT NULL,
+                subject TEXT DEFAULT '',
                 status TEXT DEFAULT 'planning',
                 phase TEXT DEFAULT 'created',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -394,6 +395,7 @@ async def init_database():
                 ("sandbox_owner_type",        "TEXT DEFAULT 'task'"),
                 ("sandbox_owner_id",          "TEXT"),
                 ("studio_id",                "TEXT"),
+                ("subject",                  "TEXT DEFAULT ''"),
                 ("updated_at",               "TIMESTAMP"),
                 ("started_at",               "TIMESTAMP"),
                 ("last_activity_at",         "TIMESTAMP"),
@@ -430,6 +432,11 @@ async def init_database():
                 ("parent_id",        "TEXT"),
                 ("position_x",       "REAL DEFAULT 0"),
                 ("position_y",       "REAL DEFAULT 0"),
+            ],
+            "annotations": [
+                ("parent_annotation_id", "TEXT"),
+                ("target_type",          "TEXT DEFAULT 'node'"),
+                ("target_id",            "TEXT"),
             ],
             "path_edges": [
                 ("iteration_id",     "TEXT"),
@@ -508,7 +515,6 @@ async def init_database():
                 updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP),
                 last_active_at = COALESCE(last_active_at, updated_at, created_at, CURRENT_TIMESTAMP)
         """)
-
         # 公共 Skill 池表（员工可绑定的技能名单，真正的执行实现由 tools/registry.py 提供）
         # `kind` 支持 builtin（对应 server/tools 里的 Python 实现）与 http（用户自定义 HTTP 接口）
         # `config` 是按 kind 自描述的 JSON：http 时含 url/method/headers/parameters 等
@@ -626,10 +632,27 @@ async def init_database():
                 selected_text TEXT NOT NULL,
                 question TEXT NOT NULL,
                 answer TEXT DEFAULT '',
+                parent_annotation_id TEXT,
+                target_type TEXT DEFAULT 'node',
+                target_id TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
-                FOREIGN KEY (node_id) REFERENCES path_nodes(id) ON DELETE CASCADE
+                FOREIGN KEY (node_id) REFERENCES path_nodes(id) ON DELETE CASCADE,
+                FOREIGN KEY (parent_annotation_id) REFERENCES annotations(id) ON DELETE CASCADE
             )
+        """)
+        await db.execute("""
+            UPDATE annotations
+            SET target_type = CASE
+                    WHEN parent_annotation_id IS NOT NULL AND parent_annotation_id != '' THEN 'annotation'
+                    WHEN node_id LIKE '__output__:%' THEN 'output'
+                    ELSE COALESCE(NULLIF(target_type, ''), 'node')
+                END,
+                target_id = CASE
+                    WHEN parent_annotation_id IS NOT NULL AND parent_annotation_id != '' THEN parent_annotation_id
+                    WHEN node_id LIKE '__output__:%' THEN substr(node_id, length('__output__:') + 1)
+                    ELSE COALESCE(NULLIF(target_id, ''), node_id)
+                END
         """)
 
         # ── 关键索引（幂等） ─────────────────────────────────────────────────
@@ -644,6 +667,8 @@ async def init_database():
             "CREATE INDEX IF NOT EXISTS idx_task_iterations_task_id ON task_iterations(task_id)",
             "CREATE INDEX IF NOT EXISTS idx_annotations_task_id ON annotations(task_id)",
             "CREATE INDEX IF NOT EXISTS idx_annotations_node_id ON annotations(node_id)",
+            "CREATE INDEX IF NOT EXISTS idx_annotations_parent_id ON annotations(parent_annotation_id)",
+            "CREATE INDEX IF NOT EXISTS idx_annotations_target ON annotations(target_type, target_id)",
             "CREATE INDEX IF NOT EXISTS idx_deep_dives_node_id ON deep_dives(node_id)",
             "CREATE INDEX IF NOT EXISTS idx_sub_agents_studio_id ON sub_agent_configs(studio_id)",
             "CREATE INDEX IF NOT EXISTS idx_tasks_studio_id ON tasks(studio_id)",

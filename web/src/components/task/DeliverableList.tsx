@@ -34,6 +34,7 @@ import {
   clearHighlights,
   annotationSignature,
 } from '../../utils/annotationHighlight'
+import { annotationTargetsNode } from '../../utils/annotationTarget'
 import './DeliverableList.css'
 
 interface Props {
@@ -903,7 +904,7 @@ export default function DeliverableList({
               }`}
             >
               {stage.nodes.map(node => {
-                const nodeAnnotations = annotations.filter(a => a.node_id === node.id)
+                const nodeAnnotations = annotations.filter(a => annotationTargetsNode(a, node.id))
                 return (
                   <div
                     key={node.id}

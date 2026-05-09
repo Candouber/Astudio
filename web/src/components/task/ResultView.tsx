@@ -18,6 +18,13 @@ import {
   annotationSignature,
 } from '../../utils/annotationHighlight'
 import {
+  annotationTargetsAnnotation,
+  annotationTargetsNode,
+  annotationTargetsOutput,
+  getAnnotationTargetId,
+  getAnnotationTargetType,
+} from '../../utils/annotationTarget'
+import {
   CheckCircle,
   AlertTriangle,
   ArrowLeft,
@@ -71,6 +78,11 @@ interface SynthesisSection {
 interface SelectionPayload {
   selectedText: string
   nodeId: string
+  anchorRect: DOMRect
+}
+
+interface ActiveAnnotationPopover {
+  annotation: Annotation
   anchorRect: DOMRect
 }
 
@@ -472,7 +484,7 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
 
   const [panelOpen, setPanelOpen] = useState(false)
   const [pendingAnnotation, setPendingAnnotation] = useState<SelectionPayload | null>(null)
-  const [activeAnnotation, setActiveAnnotation] = useState<{ annotation: Annotation; anchorRect: DOMRect } | null>(null)
+  const [activeAnnotations, setActiveAnnotations] = useState<ActiveAnnotationPopover[]>([])
   const [selectedPanelAnnotationId, setSelectedPanelAnnotationId] = useState<string | null>(null)
   const [pendingProcess, setPendingProcess] = useState<SelectionPayload | null>(null)
   const [annotations, setAnnotations] = useState<Annotation[]>([])
@@ -582,7 +594,6 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
 
   const handleAnnotate = useCallback((payload: SelectionPayload) => {
     setPendingAnnotation(payload)
-    setActiveAnnotation(null)
     setPanelOpen(false)
     setPendingProcess(null)
   }, [])
@@ -599,6 +610,7 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
     try {
       await api.deleteAnnotation(taskId, annId)
       setAnnotations(prev => prev.filter(annotation => annotation.id !== annId))
+      setActiveAnnotations(prev => prev.filter(item => item.annotation.id !== annId))
     } catch {
       /* ignore */
     }
@@ -607,7 +619,10 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
   const handleHighlightClick = useCallback((annId: string, anchorRect: DOMRect) => {
     const annotation = annotations.find(item => item.id === annId)
     if (!annotation) return
-    setActiveAnnotation({ annotation, anchorRect })
+    setActiveAnnotations(prev => [
+      ...prev.filter(item => item.annotation.id !== annotation.id),
+      { annotation, anchorRect },
+    ])
     setPendingAnnotation(null)
     setPendingProcess(null)
     setPanelOpen(false)
@@ -615,13 +630,19 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
 
   const handleJumpToAnnotation = useCallback((annotation: Annotation) => {
     setSelectedPanelAnnotationId(annotation.id)
-    setJumpTarget({ annotationId: annotation.id, nodeId: annotation.node_id })
-    if (annotation.node_id.startsWith(OUTPUT_NODE_PREFIX)) {
-      setSelectedOutputPath(annotation.node_id.slice(OUTPUT_NODE_PREFIX.length))
+    const targetType = getAnnotationTargetType(annotation)
+    const targetId = getAnnotationTargetId(annotation)
+    if (targetType === 'annotation') {
+      setJumpTarget(null)
       return
     }
-    if (annotation.node_id !== (rootNode?.id || '__synthesis__')) {
-      setExpandedNodeId(annotation.node_id)
+    setJumpTarget({ annotationId: annotation.id, nodeId: targetId })
+    if (targetType === 'output') {
+      setSelectedOutputPath(targetId)
+      return
+    }
+    if (targetId !== (rootNode?.id || '__synthesis__')) {
+      setExpandedNodeId(targetId)
     }
   }, [rootNode?.id])
 
@@ -775,7 +796,7 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
     }
   }, [jumpTarget, expandedNodeId, selectedOutputPath, selectedOutputContent, annotations])
 
-  const synthAnnotations = annotations.filter(a => a.node_id === (rootNode?.id || '__synthesis__'))
+  const synthAnnotations = annotations.filter(a => annotationTargetsNode(a, rootNode?.id || '__synthesis__'))
 
   return (
     <div className="result-layout">
@@ -815,7 +836,6 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
                 onClick={() => {
                   setPanelOpen(v => !v)
                   setPendingAnnotation(null)
-                  setActiveAnnotation(null)
                 }}
                 title={t('resultView.annotationsTitle')}
               >
@@ -1010,7 +1030,7 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
                   const previewUrl = sandbox
                     ? `/api/sandboxes/${sandbox.id}/preview/${file.path.split('/').map(encodeURIComponent).join('/')}`
                     : ''
-                  const outputAnnotations = annotations.filter(annotation => annotation.node_id === outputId)
+                  const outputAnnotations = annotations.filter(annotation => annotationTargetsOutput(annotation, file.path))
                   const Icon = isImageFile(file.path) ? ImageIcon : isCsvFile(file.path) ? FileSpreadsheet : FileText
 
                   return (
@@ -1280,7 +1300,7 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
                                 <HighlightedMarkdown
                                   content={renderedOutput}
                                   nodeId={item.node.id}
-                                  annotations={annotations.filter(annotation => annotation.node_id === item.node.id)}
+                                  annotations={annotations.filter(annotation => annotationTargetsNode(annotation, item.node.id))}
                                   onHighlightClick={handleHighlightClick}
                                   className="result-step-note__content"
                                 />
@@ -1321,6 +1341,7 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
 
           <SelectionToolbar
             containerSelector="#result-content-area"
+            ignoredSelector=".annotation-popover-selection-scope"
             onAnnotate={handleAnnotate}
             onProcess={handleProcess}
           />
@@ -1332,19 +1353,52 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
             onCreated={loadAnnotations}
           />
         )}
-        {activeAnnotation && (
-          <AnnotationPopover
-            annotation={activeAnnotation.annotation}
-            anchorRect={activeAnnotation.anchorRect}
-            onClose={() => setActiveAnnotation(null)}
-            onDelete={handleDeleteAnnotation}
-          />
+        {activeAnnotations.length > 0 && (
+          <>
+            {activeAnnotations.map(activeAnnotation => (
+              <AnnotationPopover
+                key={activeAnnotation.annotation.id}
+                taskId={taskId}
+                annotation={activeAnnotation.annotation}
+                anchorRect={activeAnnotation.anchorRect}
+                onClose={() => {
+                  setActiveAnnotations(prev => prev.filter(item => item.annotation.id !== activeAnnotation.annotation.id))
+                }}
+                onDelete={handleDeleteAnnotation}
+                onCreated={loadAnnotations}
+                annotations={annotations.filter(annotation => annotationTargetsAnnotation(annotation, activeAnnotation.annotation.id))}
+                onAnnotationHighlightClick={(annotation, anchorRect) => {
+                  setActiveAnnotations(prev => [
+                    ...prev.filter(item => item.annotation.id !== annotation.id),
+                    { annotation, anchorRect },
+                  ])
+                  setPendingAnnotation(null)
+                  setPendingProcess(null)
+                  setPanelOpen(false)
+                }}
+              />
+            ))}
+            <SelectionToolbar
+              containerSelector=".annotation-popover-selection-scope"
+              enableProcess={false}
+              onAnnotate={handleAnnotate}
+              onProcess={handleProcess}
+            />
+          </>
         )}
         {pendingProcess && (
           <ProcessSelectionPopover
             taskId={taskId}
             pending={pendingProcess}
             onClose={() => setPendingProcess(null)}
+          />
+        )}
+        {panelOpen && (
+          <SelectionToolbar
+            containerSelector="#result-annotation-panel-selection-scope"
+            enableProcess={false}
+            onAnnotate={handleAnnotate}
+            onProcess={handleProcess}
           />
         )}
         <ResultChat
@@ -1357,7 +1411,7 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
 
       <div className={`result-layout__panel ${panelOpen ? 'result-layout__panel--open' : ''}`}>
         {panelOpen && (
-          <div className="result-annotations-popout">
+          <div id="result-annotation-panel-selection-scope" className="result-annotations-popout">
             <div className="result-annotations-popout__head">
               <span>{t('resultView.panelAnnotations')}</span>
               <button type="button" className="btn btn-icon" onClick={() => setPanelOpen(false)}>×</button>
@@ -1365,34 +1419,41 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
             <div className="result-annotations-popout__list">
               {annotations.length === 0 ? (
                 <p>{t('resultView.panelHint')}</p>
-              ) : annotations.map(annotation => (
-                <div
-                  key={annotation.id}
-                  className={`result-annotations-popout__item ${
-                    selectedPanelAnnotationId === annotation.id ? 'result-annotations-popout__item--active' : ''
-                  }`}
-                >
-                  <button
-                    type="button"
-                    className="result-annotations-popout__item-trigger"
-                    onClick={() => handleTogglePanelAnnotation(annotation)}
-                    aria-expanded={selectedPanelAnnotationId === annotation.id}
+              ) : annotations.map(annotation => {
+                const childAnnotations = annotations.filter(item => annotationTargetsAnnotation(item, annotation.id))
+                return (
+                  <div
+                    key={annotation.id}
+                    className={`result-annotations-popout__item ${
+                      selectedPanelAnnotationId === annotation.id ? 'result-annotations-popout__item--active' : ''
+                    }`}
                   >
-                    <strong>{annotation.question}</strong>
-                    <span>{annotation.selected_text.length > 72 ? `${annotation.selected_text.slice(0, 72)}…` : annotation.selected_text}</span>
-                  </button>
-                  {selectedPanelAnnotationId === annotation.id && (
-                    <div className="result-annotations-popout__inline-detail">
-                      <div className="result-annotations-popout__quote">
-                        {annotation.selected_text}
+                    <button
+                      type="button"
+                      className="result-annotations-popout__item-trigger"
+                      onClick={() => handleTogglePanelAnnotation(annotation)}
+                      aria-expanded={selectedPanelAnnotationId === annotation.id}
+                    >
+                      <strong>{annotation.question}</strong>
+                      <span>{annotation.selected_text.length > 72 ? `${annotation.selected_text.slice(0, 72)}…` : annotation.selected_text}</span>
+                    </button>
+                    {selectedPanelAnnotationId === annotation.id && (
+                      <div className="result-annotations-popout__inline-detail">
+                        <div className="result-annotations-popout__quote" data-node-id={`annotation:${annotation.id}`}>
+                          {annotation.selected_text}
+                        </div>
+                        <HighlightedMarkdown
+                          content={annotation.answer || t('resultView.answerPending')}
+                          nodeId={`annotation:${annotation.id}`}
+                          annotations={childAnnotations}
+                          onHighlightClick={handleHighlightClick}
+                          className="result-annotations-popout__qa"
+                        />
                       </div>
-                      <div className="result-annotations-popout__qa">
-                        <MarkdownRenderer content={annotation.answer || t('resultView.answerPending')} />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
+                    )}
+                  </div>
+                )
+              })}
             </div>
           </div>
         )}

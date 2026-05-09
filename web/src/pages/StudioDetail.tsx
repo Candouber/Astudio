@@ -5,6 +5,7 @@ import { startChatStream } from '../api/sse'
 import { useChatStore } from '../stores/chatStore'
 import type { Studio, SubAgentConfig, Task } from '../types'
 import { useI18n } from '../i18n/useI18n'
+import { getTaskDisplayTitle } from '../utils/taskTitle'
 import {
   ArrowLeft, PlayCircle, Brain, Clock, FileText,
   User, ChevronDown, ChevronUp, Plus, Pencil, Trash2, X, Check, Zap,
@@ -435,7 +436,7 @@ export default function StudioDetail() {
                     className="sd__task-item"
                     onClick={() => navigate(`/tasks/${task.id}`)}
                   >
-                    <span className="sd__task-q">{task.question}</span>
+                    <span className="sd__task-q">{getTaskDisplayTitle(task)}</span>
                     <div className="sd__task-meta">
                       <span className={`status-badge status--${task.status}`}>
                         {taskStatusLabel(task.status, t)}

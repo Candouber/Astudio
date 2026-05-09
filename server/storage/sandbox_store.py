@@ -433,7 +433,7 @@ class SandboxStore:
 
     @staticmethod
     def _infer_static_command(root: Path) -> dict | None:
-        for rel in ("index.html", "public/index.html", "dist/index.html", "build/index.html"):
+        for rel in ("index.html", "output/index.html", "deliverables/index.html", "public/index.html", "dist/index.html", "build/index.html"):
             path = root / rel
             if path.exists() and path.is_file():
                 cwd_path = path.parent
@@ -518,7 +518,7 @@ Reserved development port: {sandbox.dev_port or "not allocated"}
 TBD.
 
 ## Page Preview
-If `index.html` or `public/index.html` is generated, open the preview from the AStudio sandbox detail page.
+If `index.html`, `output/index.html`, `deliverables/index.html`, or `public/index.html` is generated, open the preview from the AStudio sandbox detail page.
 
 ## Main Files
 TBD.
@@ -529,7 +529,8 @@ TBD.
             "AGENT_GUIDE.md": """# Agent Sandbox Work Guide
 
 - Write all code, data, reports, and generated artifacts inside the current task sandbox.
-- Do not access paths outside this sandbox.
+- Do not read or analyze paths outside this sandbox in place.
+- If the task references an external local path, import it into this sandbox first, then work only from the imported sandbox-relative copy.
 - If you generate a page, provide the start command and preview method.
 - If you start a development server, prefer the port from `PORT` / `VITE_PORT` / `ASTUDIO_SANDBOX_PORT`.
 - If you run scripts, record inputs, outputs, dependencies, and result files.

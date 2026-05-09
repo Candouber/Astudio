@@ -1,6 +1,6 @@
 .selection-toolbar {
   position: fixed;
-  z-index: 1000;
+  z-index: 1300;
   display: inline-flex;
   align-items: center;
   gap: 8px;

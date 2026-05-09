@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { X, Settings, Database, Activity, CheckCircle, AlertTriangle, ChevronDown, Plus, Trash2, LogIn, LogOut, Loader2, ShieldCheck } from 'lucide-react'
+import { X, Settings, Database, Activity, CheckCircle, AlertTriangle, ChevronDown, Plus, Trash2, LogIn, LogOut, Loader2, ShieldCheck, SlidersHorizontal } from 'lucide-react'
 import { useConfigStore } from '../../stores/configStore'
 import type { AppConfig, LLMProvider, ModelCapabilities, ReasoningEffort, RoleModelConfig, ThinkingType } from '../../types'
 import { api } from '../../api/client'
@@ -63,6 +63,11 @@ function parseKeyValueLines(text: string) {
   return out
 }
 
+function clampNumber(value: number, min: number, max: number, fallback: number) {
+  if (!Number.isFinite(value)) return fallback
+  return Math.max(min, Math.min(max, Math.trunc(value)))
+}
+
 function normalizeRoleModelConfig(value: unknown, fallbackModel: string): RoleModelConfig {
   if (typeof value === 'string') {
     return {
@@ -102,13 +107,17 @@ function normalizeSettingsConfig(config: AppConfig): AppConfig {
     model_aliases: provider.model_aliases || {},
     model_display_names: provider.model_display_names || {},
   }))
+  cloned.advanced = {
+    max_react_steps: cloned.advanced?.max_react_steps ?? 30,
+    max_search_tool_calls: cloned.advanced?.max_search_tool_calls ?? 4,
+  }
   return cloned
 }
 
 export default function SettingsModal() {
   const { config, isSettingsModalOpen, closeModal, fetchConfig, updateConfig, isSaving } = useConfigStore()
   const { t } = useI18n()
-  const [activeTab, setActiveTab] = useState<'providers' | 'routing'>('providers')
+  const [activeTab, setActiveTab] = useState<'providers' | 'routing' | 'advanced'>('providers')
   const [localConfig, setLocalConfig] = useState<AppConfig | null>(null)
   const [expandedProvider, setExpandedProvider] = useState<number | null>(null)
 
@@ -379,6 +388,16 @@ export default function SettingsModal() {
           [key]: value,
         },
       }
+    })
+  }
+
+  const handleAdvancedChange = (key: keyof AppConfig['advanced'], value: number) => {
+    setLocalConfig({
+      ...localConfig,
+      advanced: {
+        ...localConfig.advanced,
+        [key]: value,
+      },
     })
   }
 
@@ -854,6 +873,66 @@ export default function SettingsModal() {
     )
   }
 
+  const renderAdvanced = () => (
+    <div className="advanced-settings">
+      <p className="text-muted text-sm mb-4">
+        {t('settings.advancedIntro')}
+      </p>
+      <div className="advanced-settings__grid">
+        <div className="advanced-setting-card">
+          <div className="advanced-setting-card__header">
+            <SlidersHorizontal size={18} />
+            <div>
+              <label htmlFor="max-react-steps">{t('settings.maxReactSteps')}</label>
+              <p>{t('settings.maxReactStepsHelp')}</p>
+            </div>
+          </div>
+          <input
+            id="max-react-steps"
+            type="number"
+            min="1"
+            max="100"
+            step="1"
+            className="input-base"
+            value={localConfig.advanced.max_react_steps}
+            onChange={e => handleAdvancedChange(
+              'max_react_steps',
+              clampNumber(Number(e.target.value), 1, 100, 30),
+            )}
+          />
+        </div>
+        <div className="advanced-setting-card">
+          <div className="advanced-setting-card__header">
+            <SlidersHorizontal size={18} />
+            <div>
+              <label htmlFor="max-search-tool-calls">{t('settings.maxSearchToolCalls')}</label>
+              <p>{t('settings.maxSearchToolCallsHelp')}</p>
+            </div>
+          </div>
+          <input
+            id="max-search-tool-calls"
+            type="number"
+            min="0"
+            max="50"
+            step="1"
+            className="input-base"
+            value={localConfig.advanced.max_search_tool_calls}
+            onChange={e => handleAdvancedChange(
+              'max_search_tool_calls',
+              clampNumber(Number(e.target.value), 0, 50, 4),
+            )}
+          />
+        </div>
+      </div>
+    </div>
+  )
+
+  const renderActiveTab = () => {
+    if (activeTab === 'providers') return renderProviders()
+    if (activeTab === 'routing') return renderRouting()
+    return renderAdvanced()
+  }
+
   return (
     <div className="settings-modal-overlay" onClick={closeModal}>
       <div className="settings-modal" onClick={e => e.stopPropagation()}>
@@ -877,10 +956,16 @@ export default function SettingsModal() {
           >
             {t('settings.tabRouting')}
           </div>
+          <div
+            className={`settings-tab ${activeTab === 'advanced' ? 'active' : ''}`}
+            onClick={() => setActiveTab('advanced')}
+          >
+            {t('settings.tabAdvanced')}
+          </div>
         </div>
 
         <div className="settings-modal__content">
-          {activeTab === 'providers' ? renderProviders() : renderRouting()}
+          {renderActiveTab()}
         </div>
 
         <div className="settings-modal__footer">

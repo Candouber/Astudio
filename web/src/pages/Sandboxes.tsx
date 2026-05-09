@@ -4,6 +4,7 @@ import { Box, ExternalLink, Loader, Trash2 } from 'lucide-react'
 import { api } from '../api/client'
 import type { Sandbox, Task } from '../types'
 import { useI18n } from '../i18n/useI18n'
+import { getTaskDisplayTitle } from '../utils/taskTitle'
 import './Sandboxes.css'
 
 function compactText(value: string | null | undefined, limit: number) {
@@ -82,14 +83,15 @@ export default function Sandboxes() {
             const task = tasks[sb.task_id]
             const suffix = t('sandboxes.taskSuffix', { id: sb.task_id })
             const title = compactText(sb.title || suffix, 42)
-            const summary = compactText(task?.question || sb.description || sb.path, 96)
+            const taskTitle = task ? getTaskDisplayTitle(task) : ''
+            const summary = compactText(taskTitle || sb.description || sb.path, 96)
             return (
               <div key={sb.id} className="sandbox-row">
                 <button type="button" className="sandbox-row__main" onClick={() => navigate(`/sandboxes/${sb.id}`)}>
                   <span className={`sandbox-row__status sandbox-row__status--${sb.status}`} />
                   <span>
                     <strong title={sb.title || suffix}>{title}</strong>
-                    <small title={task?.question || sb.description || sb.path}>{summary}</small>
+                    <small title={taskTitle || sb.description || sb.path}>{summary}</small>
                   </span>
                 </button>
                 <span className={`sandbox-badge sandbox-badge--${sb.status}`}>

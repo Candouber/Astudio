@@ -44,12 +44,14 @@ from tools.file_ops import (
 )
 from tools.sandbox_ops import (
     ENSURE_SANDBOX_SCHEMA,
+    SANDBOX_IMPORT_PATH_SCHEMA,
     SANDBOX_LIST_FILES_SCHEMA,
     SANDBOX_READ_FILE_SCHEMA,
     SANDBOX_RUN_COMMAND_SCHEMA,
     SANDBOX_START_PREVIEW_SCHEMA,
     SANDBOX_WRITE_FILE_SCHEMA,
     ensure_sandbox,
+    sandbox_import_path,
     sandbox_list_files,
     sandbox_read_file,
     sandbox_run_command,
@@ -127,6 +129,7 @@ _BUILTIN_IMPL: Dict[str, Tuple[Callable, Dict[str, Any]]] = {
     "sandbox_list_files": (sandbox_list_files, SANDBOX_LIST_FILES_SCHEMA),
     "sandbox_read_file": (sandbox_read_file, SANDBOX_READ_FILE_SCHEMA),
     "sandbox_write_file": (sandbox_write_file, SANDBOX_WRITE_FILE_SCHEMA),
+    "sandbox_import_path": (sandbox_import_path, SANDBOX_IMPORT_PATH_SCHEMA),
     "sandbox_run_command": (sandbox_run_command, SANDBOX_RUN_COMMAND_SCHEMA),
     "sandbox_start_preview": (sandbox_start_preview, SANDBOX_START_PREVIEW_SCHEMA),
     "schedule_task": (schedule_task, SCHEDULE_TASK_SCHEMA),
@@ -239,6 +242,7 @@ async def build_tool_schemas(tool_names: Optional[List[str]] = None) -> List[Dic
         "sandbox_list_files",
         "sandbox_read_file",
         "sandbox_write_file",
+        "sandbox_import_path",
         "sandbox_run_command",
         "sandbox_start_preview",
     )

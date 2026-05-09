@@ -9,7 +9,8 @@ import ExecMonitor from '../components/task/ExecMonitor'
 import ResultView from '../components/task/ResultView'
 import SandboxDock from '../components/task/SandboxDock'
 import { useI18n } from '../i18n/useI18n'
-import { ArrowLeft, Box, FileText, GitBranch, Loader, OctagonX, RefreshCw, RotateCcw } from 'lucide-react'
+import { ArrowLeft, Box, Check, FileText, GitBranch, Loader, OctagonX, Pencil, RefreshCw, RotateCcw, X } from 'lucide-react'
+import { getTaskDisplayTitle } from '../utils/taskTitle'
 import './TaskDetail.css'
 
 const TERMINAL = ['completed', 'completed_with_blockers', 'timeout_killed', 'failed', 'terminated']
@@ -25,7 +26,10 @@ export default function TaskDetail() {
   const [rePlanning, setRePlanning] = useState(false)
   const [rerunning, setRerunning] = useState(false)
   const [resultViewMode, setResultViewMode] = useState<ResultViewMode>('work')
-  const [sandboxDockOpen, setSandboxDockOpen] = useState(true)
+  const [sandboxDockOpen, setSandboxDockOpen] = useState(false)
+  const [renaming, setRenaming] = useState(false)
+  const [subjectDraft, setSubjectDraft] = useState('')
+  const [savingSubject, setSavingSubject] = useState(false)
 
   const currentTask = useTaskStore(s => s.currentTask)
   const nodes = useTaskStore(s => s.nodes)
@@ -34,6 +38,12 @@ export default function TaskDetail() {
   const setExecuting = useTaskStore(s => s.setExecuting)
   const currentTaskId = currentTask?.id
   const currentTaskStatus = currentTask?.status
+  const displayTitle = currentTask ? getTaskDisplayTitle(currentTask) : ''
+
+  useEffect(() => {
+    setSubjectDraft(currentTask?.subject?.trim() || '')
+    setRenaming(false)
+  }, [currentTask?.id, currentTask?.subject])
 
   useEffect(() => {
     if (!taskId) return
@@ -134,6 +144,22 @@ export default function TaskDetail() {
     finally { setRePlanning(false) }
   }
 
+  const handleSaveSubject = async () => {
+    if (!taskId || !currentTask || savingSubject) return
+    setSavingSubject(true)
+    try {
+      const updated = await api.updateTaskSubject(taskId, subjectDraft.trim())
+      useTaskStore.getState().setTask(updated)
+      await useTaskStore.getState().fetchTasks()
+      setSubjectDraft(updated.subject?.trim() || '')
+      setRenaming(false)
+    } catch {
+      /* ignore */
+    } finally {
+      setSavingSubject(false)
+    }
+  }
+
   const isTerminal = TERMINAL.includes(status)
   const hasResultSurface = nodes.some(node =>
     node.status === 'completed' && Boolean((node.output || '').trim()),
@@ -197,7 +223,7 @@ export default function TaskDetail() {
   ) : isTerminal ? (
     <ResultView
       taskId={currentTask.id}
-      question={question}
+      question={displayTitle}
       status={status}
       nodes={nodes}
       studioId={currentTask.studio_id}
@@ -209,7 +235,7 @@ export default function TaskDetail() {
   const taskSurface = effectiveViewMode === 'result' && hasResultSurface ? (
     <ResultView
       taskId={currentTask.id}
-      question={question}
+      question={displayTitle}
       status={status}
       nodes={nodes}
       studioId={currentTask.studio_id}
@@ -230,6 +256,49 @@ export default function TaskDetail() {
           <ArrowLeft size={18} />
         </button>
         <span className="td__breadcrumb">{t('taskDetail.breadcrumbRoot')} / {breadcrumb}</span>
+        <div className="td__title-editor">
+          {renaming ? (
+            <>
+              <input
+                className="td__title-input"
+                value={subjectDraft}
+                onChange={e => setSubjectDraft(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') handleSaveSubject()
+                  if (e.key === 'Escape') {
+                    setSubjectDraft(currentTask.subject?.trim() || '')
+                    setRenaming(false)
+                  }
+                }}
+                placeholder={t('taskDetail.subjectPlaceholder')}
+                disabled={savingSubject}
+                autoFocus
+              />
+              <button type="button" className="btn btn-icon" onClick={handleSaveSubject} disabled={savingSubject} title={t('taskDetail.saveSubject')}>
+                {savingSubject ? <Loader size={13} className="animate-pulse" /> : <Check size={14} />}
+              </button>
+              <button
+                type="button"
+                className="btn btn-icon"
+                onClick={() => {
+                  setSubjectDraft(currentTask.subject?.trim() || '')
+                  setRenaming(false)
+                }}
+                disabled={savingSubject}
+                title={t('common.cancel')}
+              >
+                <X size={14} />
+              </button>
+            </>
+          ) : (
+            <>
+              <strong title={displayTitle}>{displayTitle}</strong>
+              <button type="button" className="btn btn-icon" onClick={() => setRenaming(true)} title={t('taskDetail.renameSubject')}>
+                <Pencil size={13} />
+              </button>
+            </>
+          )}
+        </div>
         <span className="td__iteration-pill">
           {iterationLabel}
         </span>
