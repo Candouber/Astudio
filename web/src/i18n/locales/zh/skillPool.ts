@@ -12,7 +12,7 @@ const zh: TranslationTree = {
     generatedOk: '已生成',
     title: 'Skill 池',
     introP1:
-      '统一维护员工可分配的公共技能。Agent 通过 use_skill(slug) 加载 Skill 包后按 SKILL.md 指南执行。',
+      '统一维护可分配给员工的 Skill。Skill 是工作方法和能力包，Tool 是底层执行工具，MCP 是外部连接器。',
     introP2:
       'Skill 的两种来源：①「从 URL 导入」贴一个 ClawHub / SkillHub skill 页地址直接落地；②「AI 生成」让 skill_creator 按你的目标自动造一份本地 SKILL.md。',
     refresh: '刷新',
@@ -55,6 +55,12 @@ const zh: TranslationTree = {
     close: '关闭',
     loadingMd: '加载 SKILL.md…',
     deleteConfirm: '确认删除 {{slug}}？已分配给员工的记录不会自动解绑。',
+    assignTitle: '分配 Skill 给员工',
+    assignNow: '分配',
+    assignLater: '稍后',
+    assignToEmployee: '分配给员工',
+    assignSuccess: '已分配给「{{role}}」',
+    noTeamForAssign: '暂无可分配的团队或员工，请先创建团队员工。',
   },
 }
 

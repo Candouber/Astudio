@@ -4,7 +4,7 @@
 import json
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from models.canvas import DeepDive, PathEdge, PathNode
 from models.task import SubTask, Task, TaskIteration
@@ -1011,6 +1011,80 @@ class TaskStore:
                 (summary, datetime.now().isoformat(), sub_task_id)
             )
             await db.commit()
+        finally:
+            await db.close()
+
+    async def record_step_event(
+        self,
+        *,
+        task_id: str,
+        event_type: str,
+        label: str = "",
+        sub_task_id: Optional[str] = None,
+        node_id: Optional[str] = None,
+        step_id: Optional[str] = None,
+        status: str = "ok",
+        started_at: Optional[str] = None,
+        ended_at: Optional[str] = None,
+        duration_ms: Optional[int] = None,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> str:
+        """记录任务执行耗时事件，用于后续分析 step 的模型/工具/等待耗时。"""
+        now = datetime.now().isoformat()
+        event_id = uuid.uuid4().hex[:12]
+        started = started_at or now
+        ended = ended_at or now
+        metadata_json = json.dumps(metadata or {}, ensure_ascii=False, default=str)
+        db = await get_db()
+        try:
+            await db.execute(
+                """INSERT INTO task_step_events
+                   (id, task_id, sub_task_id, node_id, step_id, event_type, label, status,
+                    started_at, ended_at, duration_ms, metadata_json, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    event_id,
+                    task_id,
+                    sub_task_id,
+                    node_id,
+                    step_id,
+                    event_type,
+                    label,
+                    status,
+                    started,
+                    ended,
+                    int(duration_ms or 0),
+                    metadata_json,
+                    now,
+                ),
+            )
+            await db.commit()
+        finally:
+            await db.close()
+        return event_id
+
+    async def list_step_events(self, task_id: str) -> list[dict]:
+        db = await get_db()
+        try:
+            cursor = await db.execute(
+                """SELECT e.*, st.step_label, st.assign_to_role, st.group_id
+                   FROM task_step_events e
+                   LEFT JOIN sub_tasks st ON st.id = e.sub_task_id
+                   WHERE e.task_id = ?
+                   ORDER BY datetime(e.started_at), e.created_at""",
+                (task_id,),
+            )
+            rows = await cursor.fetchall()
+            events: list[dict] = []
+            for row in rows:
+                item = dict(row)
+                try:
+                    item["metadata"] = json.loads(item.get("metadata_json") or "{}")
+                except Exception:
+                    item["metadata"] = {}
+                item.pop("metadata_json", None)
+                events.append(item)
+            return events
         finally:
             await db.close()
 

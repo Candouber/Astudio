@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 import uuid
 from collections import defaultdict
 from datetime import datetime
@@ -15,23 +16,23 @@ from core.task_process_runner import should_run_inline, start_task_worker, termi
 from core.tasks_monitor import task_monitor
 from i18n.status_message_codec import encode_task_status_msg as enc
 from models.canvas import PathEdge, PathNode
-from models.studio import StudioCreate, SubAgentConfigCreate
 from models.task import AskRequest, SubTask, Task
 from services.attachments import AttachmentError, build_attachment_prompt, save_task_attachments
 from services.llm_service import llm_service
 from services.pricing import estimate_cost_usd
 from storage.database import get_db
 from storage.sandbox_store import SandboxStore
-from storage.studio_store import StudioStore
+from storage.studio_store import DEFAULT_TEAM_ID, SYSTEM_STUDIO_ID, StudioStore
 from storage.task_store import TaskStore
 from utils.language import is_chinese, response_language_instruction
 
-MAX_RECRUIT_RETRIES = 3
 MAX_REVIEW_RETRIES = 2
 OUTPUT_NODE_PREFIX = "__output__:"
 
 _cancel_registry: dict[str, asyncio.Event] = {}
 _running_tasks: dict[str, set[asyncio.Task]] = defaultdict(set)
+_annotation_subscribers: dict[str, set[asyncio.Queue]] = defaultdict(set)
+_annotation_background_tasks: set[asyncio.Task] = set()
 
 
 def _register_running(task_id: str, task: asyncio.Task) -> None:
@@ -45,6 +46,20 @@ def _cancel_all_running(task_id: str) -> int:
         if not t.done():
             t.cancel()
     return len(tasks)
+
+
+def _register_background_annotation(task: asyncio.Task) -> None:
+    _annotation_background_tasks.add(task)
+    task.add_done_callback(lambda t: _annotation_background_tasks.discard(t))
+
+
+async def _publish_annotation_event(ann_id: str, event: str, data: dict) -> None:
+    subscribers = list(_annotation_subscribers.get(ann_id, set()))
+    for queue in subscribers:
+        try:
+            queue.put_nowait({"event": event, "data": json.dumps(data, ensure_ascii=False)})
+        except Exception:
+            pass
 
 _task_exec_locks: dict[str, asyncio.Lock] = {}
 _task_locks_guard = asyncio.Lock()
@@ -183,7 +198,7 @@ def _none_text(source_text: str) -> str:
 
 def _preferred_iteration_studio_id(task: Task) -> str | None:
     studio_id = task.plan_studio_id or task.studio_id
-    if studio_id and studio_id != "studio_0":
+    if studio_id and studio_id != SYSTEM_STUDIO_ID:
         return studio_id
     return None
 
@@ -205,6 +220,14 @@ async def get_task(task_id: str) -> Task:
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     return task
+
+
+@router.get("/{task_id}/step-events")
+async def list_task_step_events(task_id: str):
+    task = await task_store.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return await task_store.list_step_events(task_id)
 
 
 @router.put("/{task_id}/subject")
@@ -291,19 +314,21 @@ async def _schedule_ask_pipeline(task_id: str, question: str, preferred_studio_i
 async def _run_ask_pipeline(task_id: str, question: str, preferred_studio_id: str | None = None) -> None:
     """原 /ask SSE 中的逻辑；进度写入 status / status_message，由 GET /tasks/{id}/stream 轮询推送。"""
     studio_info: dict = {"id": "", "scenario": ""}
+    default_team = await studio_store.ensure_default_team()
 
     route_res: dict | None = None
     action = ""
+    is_system_task = agent_zero._is_high_confidence_system_management_task(question)
 
-    if preferred_studio_id and agent_zero._is_high_confidence_system_management_task(question):
+    if preferred_studio_id and is_system_task:
         logger.info(
             f"[/ask] task={task_id} 检测到系统/定时任务意图，忽略 preferred_studio={preferred_studio_id}"
         )
         preferred_studio_id = None
 
-    if preferred_studio_id and preferred_studio_id != "studio_0":
+    if preferred_studio_id and preferred_studio_id != SYSTEM_STUDIO_ID:
         preferred_studio = await studio_store.get(preferred_studio_id)
-        if preferred_studio:
+        if preferred_studio and preferred_studio.kind != "system":
             studio_info["id"] = preferred_studio_id
             studio_info["scenario"] = preferred_studio.scenario or ""
             route_res = {
@@ -320,30 +345,52 @@ async def _run_ask_pipeline(task_id: str, question: str, preferred_studio_id: st
                     name=studio_info["scenario"] or preferred_studio_id,
                 ),
             )
-            logger.info(f"[/ask] task={task_id} 沿用工作室 studio={preferred_studio_id}")
+            logger.info(f"[/ask] task={task_id} 沿用团队 studio={preferred_studio_id}")
         else:
-            logger.warning(f"[/ask] task={task_id} 指定工作室不存在，回退到常规路由: {preferred_studio_id}")
+            logger.warning(f"[/ask] task={task_id} 指定团队不存在或不可用，回退到常规路由: {preferred_studio_id}")
 
     if route_res is None:
-        await task_store.set_phase(task_id, "routing", enc("backendTaskStatus.agent_zero_evaluating"))
+        business_teams = await studio_store.list_business_teams()
+        if not is_system_task and len(business_teams) <= 1:
+            selected_team = business_teams[0] if business_teams else default_team
+            if selected_team is None:
+                await task_store.set_status_message(task_id, enc("backendTaskStatus.route_failed_detail", detail="默认团队不可用"))
+                await task_store.update_task_status(task_id, "failed")
+                return
+            studio_info["id"] = selected_team.id
+            studio_info["scenario"] = selected_team.scenario or ""
+            route_res = {
+                "action": "route",
+                "studio_id": selected_team.id,
+                "studio_scenario": studio_info["scenario"],
+            }
+            action = "route"
+            await task_store.set_phase(
+                task_id,
+                "studio_selected",
+                enc("backendTaskStatus.reuse_studio_leader_plan", name=studio_info["scenario"] or selected_team.id),
+            )
+            logger.info(f"[/ask] task={task_id} 单团队模式，直接进入默认团队 studio={selected_team.id}")
+        else:
+            await task_store.set_phase(task_id, "routing", enc("backendTaskStatus.agent_zero_evaluating"))
 
-        logger.info(f"[/ask] task={task_id} 开始路由：{question[:60]}")
-        try:
-            route_res = await agent_zero.route_task(question)
-        except Exception as route_err:
-            logger.exception(f"[/ask] task={task_id} 路由失败: {route_err}")
-            await task_store.set_status_message(task_id, enc("backendTaskStatus.route_failed_detail", detail=str(route_err)[:400]))
-            await task_store.update_task_status(task_id, "failed")
-            return
+            logger.info(f"[/ask] task={task_id} 开始路由：{question[:60]}")
+            try:
+                route_res = await agent_zero.route_task(question)
+            except Exception as route_err:
+                logger.exception(f"[/ask] task={task_id} 路由失败: {route_err}")
+                await task_store.set_status_message(task_id, enc("backendTaskStatus.route_failed_detail", detail=str(route_err)[:400]))
+                await task_store.update_task_status(task_id, "failed")
+                return
 
-        action = route_res.get("action")
-        logger.info(f"[/ask] task={task_id} 路由结果 action={action}")
+            action = route_res.get("action")
+            logger.info(f"[/ask] task={task_id} 路由结果 action={action}")
 
     if action == "solve":
         task_snap = await task_store.get(task_id)
         x_offset = _iteration_x_offset(task_snap)
-        studio_info["id"] = "studio_0"
-        studio_info["scenario"] = route_res.get("studio_scenario") or "Studio 0"
+        studio_info["id"] = SYSTEM_STUDIO_ID
+        studio_info["scenario"] = route_res.get("studio_scenario") or "系统管理团队"
         await task_store.set_phase(task_id, "direct_answering", enc("backendTaskStatus.agent_zero_direct"))
         answer = route_res.get("answer") or ("已完成直接回答。" if is_chinese(question) else "Direct answer completed.")
         node_id = str(uuid.uuid4())[:8]
@@ -357,7 +404,7 @@ async def _run_ask_pipeline(task_id: str, question: str, preferred_studio_id: st
         db = await get_db()
         try:
             await db.execute(
-                "UPDATE tasks SET studio_id='studio_0' WHERE id=?", (task_id,)
+                "UPDATE tasks SET studio_id=? WHERE id=?", (SYSTEM_STUDIO_ID, task_id)
             )
             await db.commit()
         finally:
@@ -366,20 +413,13 @@ async def _run_ask_pipeline(task_id: str, question: str, preferred_studio_id: st
         await task_store.set_status_message(task_id, enc("backendTaskStatus.answer_done"))
         return
 
+    studio_id = route_res.get("studio_id") or (default_team.id if default_team else DEFAULT_TEAM_ID)
     if action == "create_studio":
-        await task_store.set_phase(task_id, "creating_studio", enc("backendTaskStatus.creating_new_studio"))
-        new_scenario = route_res.get("studio_name", "Dynamic Incubation Studio")
-        leader_role = route_res.get("leader_role", "Lead")
-        new_studio = await studio_store.create(StudioCreate(
-            scenario=new_scenario,
-            description=f"Category: {route_res.get('category', 'General')}",
-            sub_agents=[SubAgentConfigCreate(role=leader_role, agent_md=f"# {leader_role}")]
-        ))
-        studio_id = new_studio.id
-        studio_info["scenario"] = new_studio.scenario or new_scenario
-    else:
-        studio_id = route_res.get("studio_id", "studio_0")
-        studio_info["scenario"] = route_res.get("studio_scenario") or ""
+        logger.warning(f"[/ask] task={task_id} 收到已废弃 create_studio 动作，回退到默认团队")
+        studio_id = default_team.id if default_team else DEFAULT_TEAM_ID
+    studio_info["scenario"] = route_res.get("studio_scenario") or ""
+    if studio_id == DEFAULT_TEAM_ID and not studio_info["scenario"] and default_team:
+        studio_info["scenario"] = default_team.scenario
 
     studio_info["id"] = studio_id
     await task_store.set_phase(
@@ -410,42 +450,20 @@ async def _run_ask_pipeline(task_id: str, question: str, preferred_studio_id: st
 # 内部：Leader 规划（含招聘循环上限）
 # ──────────────────────────────────────────────
 async def _run_leader_planning(task_id: str, studio_id: str, goal: str) -> dict:
-    from storage.database import get_db
-    recruit_count = 0
     while True:
         await task_store.set_phase(task_id, "leader_planning")
         plan_res = await studio_leader.plan_sub_tasks(task_id, studio_id, goal)
         logger.info(
             f"[LeaderPlanResult] task={task_id} studio={studio_id} "
-            f"round={recruit_count + 1} action={plan_res.get('action')} "
+            f"action={plan_res.get('action')} "
             f"steps={len(plan_res.get('steps') or []) if isinstance(plan_res.get('steps'), list) else 0} "
             f"questions={len(plan_res.get('questions') or []) if isinstance(plan_res.get('questions'), list) else 0}"
         )
-        if plan_res.get("action") == "recruit_employee" and recruit_count < MAX_RECRUIT_RETRIES:
+        if plan_res.get("action") == "recruit_employee":
             role_needed = plan_res.get("employee_role", "Unnamed Specialist")
-            await task_store.set_phase(
-                task_id,
-                "recruiting",
-                enc("backendTaskStatus.recruiting_employee", role=role_needed),
-            )
-            # HR 专员决定该角色所需技能
-            skills_needed = await _hr_decide_skills(role_needed)
-            emp_id = str(uuid.uuid4())[:8]
-            db = await get_db()
-            try:
-                await db.execute(
-                    "INSERT INTO sub_agent_configs (id, studio_id, role, skills) VALUES (?, ?, ?, ?)",
-                    (emp_id, studio_id, role_needed, json.dumps(skills_needed, ensure_ascii=False))
-                )
-                await db.commit()
-            finally:
-                await db.close()
-            logger.info(f"HR 为 [{role_needed}] 分配技能: {skills_needed}")
-            recruit_count += 1
-        elif plan_res.get("action") == "recruit_employee":
             logger.warning(
-                f"Leader repeatedly requested recruitment for task={task_id}; "
-                f"max recruit retries reached ({MAX_RECRUIT_RETRIES}), using fallback execution plan"
+                f"Leader requested recruitment for task={task_id}, role={role_needed}; "
+                "automatic employee creation is disabled, using existing-team fallback plan"
             )
             studio = await studio_store.get(studio_id)
             return studio_leader._fallback_plan_or_recruit(  # noqa: SLF001
@@ -455,8 +473,7 @@ async def _run_leader_planning(task_id: str, studio_id: str, goal: str) -> dict:
                 "max_recruit_retries",
                 allow_recruit=False,
             )
-        else:
-            return plan_res
+        return plan_res
 
 
 async def _ensure_executable_plan(
@@ -490,65 +507,6 @@ async def _ensure_executable_plan(
         return fallback
 
     raise ValueError("Leader returned no executable plan and fallback could not create one.")
-
-
-async def _hr_decide_skills(role: str) -> list[str]:
-    """调用 HR 专员的 LLM，基于当前 Skill 池为指定角色分配技能。
-
-    白名单与提示词都来自 `tools.registry`，跟着 Skill 池动态走 —— 用户在 UI 上
-    启用 / 停用 / 新增的 slug 都会被感知，不再硬编码。
-    """
-    from agents.context import ContextBuilder
-    from services.llm_service import llm_service
-    from tools.registry import describe_available_skills, list_available_slugs
-
-    available = await describe_available_skills()
-    if not available:
-        logger.warning("Skill 池当前为空，HR 招聘退化为无 skill 员工")
-        return []
-
-    # 动态渲染 Markdown 表（| slug | name | description |）注入到 HR 提示里
-    table_lines = ["| slug | Name | Description |", "|---|---|---|"]
-    for item in available:
-        desc = (item.get("description") or "").replace("|", "/").replace("\n", " ")
-        table_lines.append(f"| `{item['slug']}` | {item.get('name') or item['slug']} | {desc} |")
-    hr_prompt = ContextBuilder.build_hr_agent(available_skills="\n".join(table_lines))
-
-    valid_slugs = set(await list_available_slugs())
-    fallback = [
-        slug for slug in ("web_search", "browser_search")
-        if slug in valid_slugs
-    ] or list(valid_slugs)[:1]
-
-    try:
-        response = await llm_service.chat(
-            messages=[
-                {"role": "system", "content": hr_prompt},
-                {"role": "user", "content": f"Assign skills for the following role: {role}"},
-            ],
-            role="agent_zero",   # 使用 agent_zero 级别的 LLM
-            stream=False,
-            temperature=0.0,
-        )
-        text = str(response).strip()
-        if text.startswith("```json"):
-            text = text[7:-3].strip()
-        elif text.startswith("```"):
-            text = text[3:-3].strip()
-        result = json.loads(text)
-        raw_skills = result.get("skills", []) or []
-        skills = [s for s in raw_skills if s in valid_slugs]
-        if "web_search" in skills and "browser_search" in valid_slugs and "browser_search" not in skills:
-            skills.append("browser_search")
-        if not skills:
-            logger.warning(
-                f"HR 返回的 skill 全部落空 (raw={raw_skills})，退化为默认: {fallback}"
-            )
-            return fallback
-        return skills
-    except Exception as e:
-        logger.warning(f"HR 技能判断失败: {e}，使用默认技能 {fallback}")
-        return fallback
 
 
 # ──────────────────────────────────────────────
@@ -650,7 +608,7 @@ async def clarify_task(task_id: str, request: Request, payload: dict):
     if not task:
         raise HTTPException(404)
     answers: dict = payload.get("answers", {})  # {question_id: answer_text}
-    studio_id = task.plan_studio_id or task.studio_id or "studio_0"
+    studio_id = task.plan_studio_id or task.studio_id or DEFAULT_TEAM_ID
 
     await task_store.save_clarification_answers(task_id, answers)
     await task_store.update_task_status(task_id, "planning")
@@ -771,7 +729,7 @@ async def rerun_original(task_id: str):
     if not task.plan_steps:
         raise HTTPException(400, "任务没有保存的方案步骤，请重新规划")
 
-    studio_id = task.plan_studio_id or task.studio_id or "studio_0"
+    studio_id = task.plan_studio_id or task.studio_id or DEFAULT_TEAM_ID
     steps = task.plan_steps
 
     await task_store.begin_iteration(
@@ -869,7 +827,7 @@ async def proceed_task(task_id: str, payload: dict):
 
     feedback = payload.get("feedback", "")
     route_cmd = payload.get("route_cmd", {})
-    studio_id = route_cmd.get("studio_id") or task.plan_studio_id or task.studio_id or "studio_0"
+    studio_id = route_cmd.get("studio_id") or task.plan_studio_id or task.studio_id or DEFAULT_TEAM_ID
     if not feedback and not route_cmd.get("steps") and task.plan_steps:
         route_cmd = {**route_cmd, "studio_id": studio_id, "steps": task.plan_steps}
     if not feedback and not route_cmd.get("steps"):
@@ -1071,14 +1029,40 @@ async def _execute_dag(
         step_lab = step.get("step_label", sid)
 
         try:
+            wait_started_at = datetime.now().isoformat()
+            wait_t0 = time.perf_counter()
             # 等待所有依赖步骤完成（含被阻塞的步骤，阻塞也会 set event，让后续尽快感知）
             for dep_id in depends_on:
                 if dep_id in step_events:
                     await step_events[dep_id].wait()
                 # 取消检查：终止信号到达，立即退出
                 if cancel_event and cancel_event.is_set():
+                    await task_store.record_step_event(
+                        task_id=task_id,
+                        node_id=ids["ui_node_id"],
+                        step_id=sid,
+                        event_type="dependency_wait",
+                        label="等待依赖步骤",
+                        status="terminated",
+                        started_at=wait_started_at,
+                        ended_at=datetime.now().isoformat(),
+                        duration_ms=int((time.perf_counter() - wait_t0) * 1000),
+                        metadata={"depends_on": depends_on, "step_label": step_lab},
+                    )
                     await task_store.update_node_status(ids["ui_node_id"], "error", "[TERMINATED] 任务已被用户终止")
                     return
+            await task_store.record_step_event(
+                task_id=task_id,
+                node_id=ids["ui_node_id"],
+                step_id=sid,
+                event_type="dependency_wait",
+                label="等待依赖步骤",
+                status="ok",
+                started_at=wait_started_at,
+                ended_at=datetime.now().isoformat(),
+                duration_ms=int((time.perf_counter() - wait_t0) * 1000),
+                metadata={"depends_on": depends_on, "step_label": step_lab},
+            )
 
             # 取消检查：依赖等待完毕后，执行前再检查一次
             if cancel_event and cancel_event.is_set():
@@ -1423,7 +1407,47 @@ async def _run_employee_with_review(
             await task_store.append_node_trace(ui_node_id, review_trace)
             await task_store.update_node_status(ui_node_id, "running", f"[{review_label}] {deliverable[:80]}...")
 
-            review = await studio_leader.review_sub_task(studio_id, step_lab, original_spec, deliverable)
+            review_started_at = datetime.now().isoformat()
+            review_t0 = time.perf_counter()
+            try:
+                review = await studio_leader.review_sub_task(studio_id, step_lab, original_spec, deliverable)
+                await task_store.record_step_event(
+                    task_id=task_id,
+                    sub_task_id=sub_task_id,
+                    node_id=ui_node_id,
+                    event_type="review",
+                    label="Leader 质量复核",
+                    status=review.get("verdict") or "ok",
+                    started_at=review_started_at,
+                    ended_at=datetime.now().isoformat(),
+                    duration_ms=int((time.perf_counter() - review_t0) * 1000),
+                    metadata={
+                        "step_label": step_lab,
+                        "agent_role": emp_role,
+                        "deliverable_chars": len(deliverable),
+                        "verdict": review.get("verdict"),
+                        "feedback_chars": len(review.get("feedback") or ""),
+                    },
+                )
+            except Exception as review_err:
+                await task_store.record_step_event(
+                    task_id=task_id,
+                    sub_task_id=sub_task_id,
+                    node_id=ui_node_id,
+                    event_type="review",
+                    label="Leader 质量复核",
+                    status="failed",
+                    started_at=review_started_at,
+                    ended_at=datetime.now().isoformat(),
+                    duration_ms=int((time.perf_counter() - review_t0) * 1000),
+                    metadata={
+                        "step_label": step_lab,
+                        "agent_role": emp_role,
+                        "deliverable_chars": len(deliverable),
+                        "error": f"{type(review_err).__name__}: {review_err}",
+                    },
+                )
+                raise
 
             if review["verdict"] == "accept":
                 await task_store.update_sub_task_status(sub_task_id, "accepted", deliverable=deliverable)
@@ -1506,7 +1530,7 @@ async def retry_step(task_id: str, request: Request, payload: dict):
         def _status(msg: str):
             return {"event": "status", "data": json.dumps({"status": "executing", "message": msg, "task_id": task_id})}
 
-        studio_id = sub_task.studio_id or task.studio_id or "studio_0"
+        studio_id = sub_task.studio_id or task.studio_id or DEFAULT_TEAM_ID
         input_ctx = sub_task.input_context
         if extra_context:
             supplemental_heading = (
@@ -1624,7 +1648,7 @@ async def edit_step(task_id: str, request: Request, payload: dict):
 
         # 2. 级联下游
         if cascade:
-            studio_id = sub_task.studio_id or task.studio_id or "studio_0"
+            studio_id = sub_task.studio_id or task.studio_id or DEFAULT_TEAM_ID
             # 进入执行态，让 /stream 的前端能识别
             await task_store.update_task_status(task_id, "executing")
             async for evt in _resume_downstream_cascade(
@@ -1904,34 +1928,34 @@ async def annotate(task_id: str, payload: dict):
         target_id=target_id,
     )
 
-    async def event_generator():
-        from services.llm_service import llm_service
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a task-result annotation assistant. The user selected text while reading "
+                "a studio member's output and asked a question.\n"
+                "Answer precisely using the full output context. Keep the answer concise, accurate, "
+                "and directly relevant.\n"
+                "Markdown is allowed.\n\n"
+                f"{response_language_instruction(question or task.question, subject='the annotation answer')}"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"## Output Source\n"
+                f"- Step: {node_label}\n"
+                f"- Role: {node_role}\n\n"
+                f"## Full Output Content\n{node_context}\n\n"
+                f"---\n\n"
+                f"## User-Selected Text\n> {selected_text}\n\n"
+                f"## User Question\n{question}"
+            ),
+        },
+    ]
 
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You are a task-result annotation assistant. The user selected text while reading "
-                    "a studio member's output and asked a question.\n"
-                    "Answer precisely using the full output context. Keep the answer concise, accurate, "
-                    "and directly relevant.\n"
-                    "Markdown is allowed.\n\n"
-                    f"{response_language_instruction(question or task.question, subject='the annotation answer')}"
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"## Output Source\n"
-                    f"- Step: {node_label}\n"
-                    f"- Role: {node_role}\n\n"
-                    f"## Full Output Content\n{node_context}\n\n"
-                    f"---\n\n"
-                    f"## User-Selected Text\n> {selected_text}\n\n"
-                    f"## User Question\n{question}"
-                ),
-            },
-        ]
+    async def generate_annotation_answer():
+        from services.llm_service import llm_service
 
         full_answer = ""
         try:
@@ -1944,10 +1968,7 @@ async def annotate(task_id: str, payload: dict):
             async for chunk in stream:
                 if chunk:
                     full_answer += chunk
-                    yield {
-                        "event": "chunk",
-                        "data": json.dumps({"text": chunk, "ann_id": ann_id}),
-                    }
+                    await _publish_annotation_event(ann_id, "chunk", {"text": chunk, "ann_id": ann_id})
         except Exception as e:
             logger.exception(f"批注 AI 回答失败: {e}")
             err_msg = (
@@ -1956,14 +1977,29 @@ async def annotate(task_id: str, payload: dict):
                 else f"Answer generation failed: {type(e).__name__}"
             )
             full_answer = err_msg
-            yield {"event": "chunk", "data": json.dumps({"text": err_msg, "ann_id": ann_id})}
+            await _publish_annotation_event(ann_id, "chunk", {"text": err_msg, "ann_id": ann_id})
 
-        # 保存完整回答
         await task_store.update_annotation_answer(ann_id, full_answer)
-        yield {
-            "event": "done",
-            "data": json.dumps({"ann_id": ann_id, "answer": full_answer}),
-        }
+        await _publish_annotation_event(ann_id, "done", {"ann_id": ann_id, "answer": full_answer})
+
+    queue: asyncio.Queue = asyncio.Queue()
+    _annotation_subscribers[ann_id].add(queue)
+    bg_task = asyncio.create_task(generate_annotation_answer())
+    _register_background_annotation(bg_task)
+
+    async def event_generator():
+        try:
+            while True:
+                item = await queue.get()
+                yield item
+                if item.get("event") == "done":
+                    break
+        finally:
+            subscribers = _annotation_subscribers.get(ann_id)
+            if subscribers is not None:
+                subscribers.discard(queue)
+                if not subscribers:
+                    _annotation_subscribers.pop(ann_id, None)
 
     return EventSourceResponse(event_generator())
 
@@ -2057,7 +2093,7 @@ async def process_selection(task_id: str, payload: dict):
     )
 
     new_task = await task_store.create(question=derived_question, studio_id=task.studio_id)
-    preferred_studio_id = task.studio_id if task.studio_id and task.studio_id != "studio_0" else None
+    preferred_studio_id = task.studio_id if task.studio_id and task.studio_id != SYSTEM_STUDIO_ID else None
     await _schedule_ask_pipeline(new_task.id, derived_question, preferred_studio_id=preferred_studio_id)
 
     logger.info(
@@ -2150,10 +2186,10 @@ async def iterate_selection(task_id: str, payload: dict):
         f"## Recent Output Summaries from Current Task\n"
         f"{chr(10).join(sub_task_context) if sub_task_context else ('无步骤摘要。' if zh_iter else 'No step summaries.')}\n\n"
         f"## Full Context Containing the Current Segment\n{node_context or ('无完整上下文。' if zh_iter else 'No full context available.')}\n\n"
-        "## Studio and Sandbox Strategy\n"
-        "This is an iteration of the same task, so keep the current business studio by default. "
-        "Do not route this iteration to Studio 0 or system management merely because the context mentions "
-        "task, sandbox, code, files, or frontend artifacts. Only use Studio 0 when the user's new request "
+        "## Team and Sandbox Strategy\n"
+        "This is an iteration of the same task, so keep the current business team by default. "
+        "Do not route this iteration to the system team merely because the context mentions "
+        "task, sandbox, code, files, or frontend artifacts. Only use the system team when the user's new request "
         "explicitly asks to change AStudio itself, system settings, skills, providers, scheduler, or platform configuration.\n"
         "This iteration is still the **same task** (same task_id). The sandbox, tool runtime environment, "
         "existing files, and generated artifacts are bound to this task. Iterate on top of the original sandbox "
@@ -2252,10 +2288,10 @@ async def iterate_task(task_id: str, payload: dict):
         f"## Recent Output Summaries from Current Task\n"
         f"{chr(10).join(sub_task_context) if sub_task_context else ('无步骤摘要。' if zh_iter else 'No step summaries.')}\n\n"
         f"## Current Synthesis Result\n{synthesis or ('暂无最终汇总。' if zh_iter else 'No synthesis result yet.')}\n\n"
-        "## Studio and Sandbox Strategy\n"
-        "This is an iteration of the same task, so keep the current business studio by default. "
-        "Do not route this iteration to Studio 0 or system management merely because the context mentions "
-        "task, sandbox, code, files, or frontend artifacts. Only use Studio 0 when the user's new request "
+        "## Team and Sandbox Strategy\n"
+        "This is an iteration of the same task, so keep the current business team by default. "
+        "Do not route this iteration to the system team merely because the context mentions "
+        "task, sandbox, code, files, or frontend artifacts. Only use the system team when the user's new request "
         "explicitly asks to change AStudio itself, system settings, skills, providers, scheduler, or platform configuration.\n"
         "This iteration is still the **same task** (same task_id). The sandbox, tool runtime environment, "
         "existing files, and generated artifacts are bound to this task. Iterate on top of the original sandbox "
@@ -2498,7 +2534,8 @@ async def create_and_run_scheduled_task(job, run_id: str) -> str | None:
     """
     try:
         message = job.message or ""
-        studio_id = job.target_studio_id or "studio_0"
+        default_team = await studio_store.ensure_default_team()
+        studio_id = job.target_studio_id or (default_team.id if default_team else DEFAULT_TEAM_ID)
         task = await task_store.create(
             question=message,
             studio_id=studio_id,

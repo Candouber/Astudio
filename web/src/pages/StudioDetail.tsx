@@ -242,18 +242,24 @@ export default function StudioDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [studio, setStudio] = useState<Studio | null>(null)
+  const [studios, setStudios] = useState<Studio[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
   const [question, setQuestion] = useState('')
   const [showAddForm, setShowAddForm] = useState(false)
+  const [confirmDeleteStudio, setConfirmDeleteStudio] = useState(false)
+  const [deletingStudio, setDeletingStudio] = useState(false)
 
   useEffect(() => {
     if (!id) return
-    Promise.all([api.getStudio(id), api.getStudioTasks(id)])
-      .then(([s, t]) => { setStudio(s); setTasks(t) })
+    Promise.all([api.getStudio(id), api.getStudioTasks(id), api.getStudios()])
+      .then(([s, t, all]) => { setStudio(s); setTasks(t); setStudios(all) })
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [id])
+
+  const businessTeamCount = studios.filter(s => (s.kind ?? 'team') === 'team' && !s.is_hidden).length
+  const canDeleteStudio = Boolean(studio && !studio.is_default && studio.kind !== 'system' && businessTeamCount > 1)
 
   const handleStart = () => {
     if (!question.trim() || !studio) return
@@ -281,6 +287,23 @@ export default function StudioDetail() {
     setShowAddForm(false)
   }
 
+  const handleDeleteStudio = async () => {
+    if (!studio || !canDeleteStudio || deletingStudio) return
+    if (!confirmDeleteStudio) {
+      setConfirmDeleteStudio(true)
+      return
+    }
+    setDeletingStudio(true)
+    try {
+      await api.deleteStudio(studio.id)
+      navigate('/studios')
+    } catch {
+      setConfirmDeleteStudio(false)
+    } finally {
+      setDeletingStudio(false)
+    }
+  }
+
   if (loading) return <div className="sd__loading">{t('studioDetail.loading')}</div>
   if (!studio) return <div className="sd__loading">{t('studioDetail.notFound')}</div>
 
@@ -301,6 +324,35 @@ export default function StudioDetail() {
             <small>{t('studioDetail.cumulativeCost')}</small>
           </div>
         )}
+        <div className="sd__studio-delete">
+          <button
+            type="button"
+            className="btn btn-icon icon-danger"
+            onClick={handleDeleteStudio}
+            disabled={!canDeleteStudio || deletingStudio}
+            title={
+              studio.is_default
+                ? t('studios.defaultCannotDelete')
+                : canDeleteStudio
+                  ? t('studios.deleteTitle')
+                  : t('studios.keepOneTeam')
+            }
+          >
+            <Trash2 size={15} />
+          </button>
+          {confirmDeleteStudio && (
+            <div className="sd__studio-delete-confirm">
+              <span>{t('studios.confirmDelete', { name: studio.scenario })}</span>
+              <button type="button" className="btn btn-danger btn-sm" onClick={handleDeleteStudio} disabled={deletingStudio}>
+                <Trash2 size={12} />
+                {deletingStudio ? t('studios.deleting') : t('studios.deleteTitle')}
+              </button>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setConfirmDeleteStudio(false)} disabled={deletingStudio}>
+                {t('common.cancel')}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="sd__grid">

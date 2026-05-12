@@ -22,6 +22,9 @@ export interface SubAgentConfig {
 export interface Studio {
   id: string;
   scenario: string;
+  kind?: 'team' | 'system' | string;
+  is_default?: boolean;
+  is_hidden?: boolean;
   is_working: boolean;
   total_tokens: number;
   sub_agents: SubAgentConfig[];
@@ -155,6 +158,25 @@ export interface TaskIteration {
   completed_at?: string | null;
 }
 
+export interface TaskStepEvent {
+  id: string;
+  task_id: string;
+  sub_task_id?: string | null;
+  node_id?: string | null;
+  step_id?: string | null;
+  event_type: 'dependency_wait' | 'llm_call' | 'tool_call' | 'review' | string;
+  label: string;
+  status: string;
+  started_at: string;
+  ended_at?: string | null;
+  duration_ms: number;
+  created_at?: string;
+  step_label?: string | null;
+  assign_to_role?: string | null;
+  group_id?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
 export interface TaskAttachment {
   id: string;
   filename: string;
@@ -243,6 +265,8 @@ export interface AppConfig {
 export interface AdvancedConfig {
   max_react_steps: number;
   max_search_tool_calls: number;
+  planning_stale_seconds: number;
+  executing_stale_seconds: number;
 }
 
 // ── Sandbox ────────────────────────────────────────────────────────────────

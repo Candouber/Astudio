@@ -42,6 +42,46 @@
   font-size: 0.84rem;
 }
 
+.skill-pool-assignment {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.skill-pool-assignment__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+}
+
+.skill-pool-assignment__title code {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.skill-pool-assignment__controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.skill-pool-assignment p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
 /* ── 导入 / AI 生成 卡片 ─────────────────────────────────────────── */
 .skill-pool-intake {
   display: grid;
@@ -389,6 +429,7 @@
   .skill-pool-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .skill-pool-intake { grid-template-columns: 1fr; }
   .skill-pool-intake__row { grid-template-columns: 1fr; }
+  .skill-pool-assignment__controls { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 640px) {

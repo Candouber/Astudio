@@ -61,7 +61,7 @@ const zh: TranslationTree = {
     roleAgentZeroTitle: '0 号 Agent',
     roleAgentZeroSubtitle: '总控规划',
     roleAgentZeroHint:
-      '负责理解用户目标、选择工作室路径并拆解任务，适合使用推理能力更强的模型。',
+      '负责理解用户目标，并在多团队场景下选择团队路径，适合使用推理能力更强的模型。',
     roleSubAgentsTitle: '执行 Agent',
     roleSubAgentsSubtitle: '任务执行',
     roleSubAgentsHint:
@@ -86,13 +86,19 @@ const zh: TranslationTree = {
     tabRouting: '角色模型分路',
     tabAdvanced: '高级配置',
     advancedIntro:
-      '调整执行 Agent 的循环与检索预算。数值越高，复杂任务可探索更久，但耗时和成本也会增加。',
+      '调整执行 Agent 的循环、检索预算和任务看门狗超时。数值越高，复杂任务可探索更久，但耗时和成本也会增加。',
     maxReactSteps: '执行 Agent 最大步数',
     maxReactStepsHelp:
       '单个执行 Agent 在一次子任务中最多进行多少轮思考、工具调用与收口。默认 30。',
     maxSearchToolCalls: '搜索工具调用上限',
     maxSearchToolCallsHelp:
       '单个执行 Agent 在一次子任务中最多调用 web_search / browser_search 的次数。设为 0 表示禁止搜索。',
+    planningStaleSeconds: '规划阶段卡死判定秒数',
+    planningStaleSecondsHelp:
+      '任务处于规划中且连续多少秒无进展后，才自动标记失败。默认 900 秒。',
+    executingStaleSeconds: '执行阶段卡死判定秒数',
+    executingStaleSecondsHelp:
+      '任务处于执行中且连续多少秒无进展后，才自动终止。默认 1200 秒。',
     saveConfig: '保存配置',
     savingConfig: '保存中...',
     providerNameLabel: 'Provider Name',

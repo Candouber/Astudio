@@ -11,13 +11,14 @@ from tools.execution_safety import build_sanitized_env
 
 SUBPROCESS_START_KWARGS = {"start_new_session": True} if os.name == "posix" else {}
 PREVIEW_INDEX_CANDIDATES = (
-    "index.html",
     "output/index.html",
+    "index.html",
     "deliverables/index.html",
     "public/index.html",
     "dist/index.html",
     "build/index.html",
 )
+ITERATION_OUTPUT_INDEX_PATTERN = "output/{iteration_id}/index.html"
 
 
 async def terminate_process_tree(
@@ -68,7 +69,12 @@ def build_sandbox_env(sandbox: Sandbox) -> dict[str, str]:
     return env
 
 
-def prepare_sandbox_command(command: str, sandbox: Sandbox, cwd: str | Path | None = None) -> tuple[str, str | None]:
+def prepare_sandbox_command(
+    command: str,
+    sandbox: Sandbox,
+    cwd: str | Path | None = None,
+    iteration_id: str | None = None,
+) -> tuple[str, str | None]:
     """Attach the reserved sandbox port to common dev-server commands."""
     port = sandbox.dev_port
     if not port:
@@ -81,7 +87,7 @@ def prepare_sandbox_command(command: str, sandbox: Sandbox, cwd: str | Path | No
 
     if _has_explicit_port(lowered):
         if "python" in lowered and "-m http.server" in lowered:
-            return stripped, _static_preview_url(sandbox, server_root, preview_url)
+            return stripped, _static_preview_url(sandbox, server_root, preview_url, iteration_id)
         return stripped, preview_url if _looks_like_server(lowered) else None
 
     if re.search(r"\b((pnpm|yarn)\s+(run\s+)?dev|npm\s+run\s+dev)\b", lowered):
@@ -96,7 +102,10 @@ def prepare_sandbox_command(command: str, sandbox: Sandbox, cwd: str | Path | No
         return f"{stripped} -H 127.0.0.1 -p {port}", preview_url
 
     if "python" in lowered and "-m http.server" in lowered:
-        return f"{stripped} {port} --bind 127.0.0.1", _static_preview_url(sandbox, server_root, preview_url)
+        return (
+            f"{stripped} {port} --bind 127.0.0.1",
+            _static_preview_url(sandbox, server_root, preview_url, iteration_id),
+        )
 
     if re.search(r"(^|\s)uvicorn\b", lowered):
         return f"{stripped} --host 127.0.0.1 --port {port}", preview_url
@@ -125,7 +134,32 @@ def _looks_like_server(command: str) -> bool:
     )
 
 
-def find_preview_index(root: Path) -> Path | None:
+def safe_iteration_id(iteration_id: str | None) -> str:
+    if not iteration_id:
+        return ""
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", iteration_id).strip(".-")
+
+
+def find_preview_index(root: Path, iteration_id: str | None = None) -> Path | None:
+    safe_id = safe_iteration_id(iteration_id)
+    if safe_id:
+        path = root / ITERATION_OUTPUT_INDEX_PATTERN.format(iteration_id=safe_id)
+        if path.exists() and path.is_file():
+            return path
+        for rel in PREVIEW_INDEX_CANDIDATES:
+            path = root / rel
+            if path.exists() and path.is_file():
+                return path
+        return None
+
+    iterated_indexes = [
+        path for path in (root / "output").glob("*/index.html")
+        if path.is_file()
+    ]
+    if iterated_indexes:
+        iterated_indexes.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+        return iterated_indexes[0]
+
     for rel in PREVIEW_INDEX_CANDIDATES:
         path = root / rel
         if path.exists() and path.is_file():
@@ -133,8 +167,13 @@ def find_preview_index(root: Path) -> Path | None:
     return None
 
 
-def _static_preview_url(sandbox: Sandbox, server_root: Path, base_url: str) -> str:
-    index_path = find_preview_index(Path(sandbox.path))
+def _static_preview_url(
+    sandbox: Sandbox,
+    server_root: Path,
+    base_url: str,
+    iteration_id: str | None = None,
+) -> str:
+    index_path = find_preview_index(Path(sandbox.path), iteration_id=iteration_id)
     if not index_path:
         return base_url
     try:

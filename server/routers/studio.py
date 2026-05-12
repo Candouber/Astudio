@@ -65,8 +65,15 @@ async def update_studio(studio_id: str, req: StudioUpdate) -> Studio:
 @router.delete("/{studio_id}", status_code=204)
 async def delete_studio(studio_id: str):
     """删除工作室"""
+    studio = await store.get(studio_id)
+    if studio and (studio.kind == "system" or studio.is_default):
+        raise HTTPException(status_code=400, detail="默认团队或系统团队不能删除")
+    if studio and await store.count_business_teams() <= 1:
+        raise HTTPException(status_code=400, detail="至少需要保留一个团队")
     success = await store.delete(studio_id)
     if not success:
+        if studio:
+            raise HTTPException(status_code=400, detail="团队不能删除")
         raise HTTPException(status_code=404, detail="工作室不存在")
 
 

@@ -18,9 +18,23 @@ from services.model_capabilities import ModelCapabilities, infer_model_capabilit
 from storage.database import CONFIG_PATH
 
 _RETRY_DELAYS = (3.0, 8.0)
-_CONNECT_TIMEOUT = 30.0
-_NONSTREAM_CALL_TIMEOUT = 180.0
-_STREAM_CHUNK_TIMEOUT = 60.0
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+        return value if value > 0 else default
+    except ValueError:
+        logger.warning(f"Invalid {name}={raw!r}; using default {default}")
+        return default
+
+
+_CONNECT_TIMEOUT = _env_float("ASTUDIO_LLM_CONNECT_TIMEOUT", 30.0)
+_NONSTREAM_CALL_TIMEOUT = _env_float("ASTUDIO_LLM_NONSTREAM_TIMEOUT", 300.0)
+_STREAM_CHUNK_TIMEOUT = _env_float("ASTUDIO_LLM_STREAM_CHUNK_TIMEOUT", 120.0)
 _TRANSIENT_MARKERS = (
     "429", "rate limit",
     "500", "502", "503", "504",
@@ -190,7 +204,9 @@ class LLMService:
 
         分层超时：
           · 流式（stream=True）：30s 仅保护"建立连接 / 返回首个 chunk"
-          · 非流式（stream=False）：180s 覆盖"完整响应返回"
+          · 非流式（stream=False）：默认 300s 覆盖"完整响应返回"
+          · 这些值可通过 ASTUDIO_LLM_CONNECT_TIMEOUT /
+            ASTUDIO_LLM_NONSTREAM_TIMEOUT / ASTUDIO_LLM_STREAM_CHUNK_TIMEOUT 覆盖
         瞬时错误（429/5xx/超时/网络）最多重试 2 次，间隔 3s / 8s。
         非瞬时错误（认证失败、参数错误等）直接上抛。
         """

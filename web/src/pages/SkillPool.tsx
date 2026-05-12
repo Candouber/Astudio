@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
-  AlertTriangle, Check, ChevronRight, Code2, Download, Eye, FileCode2, Loader, Package, RefreshCw, RotateCcw, Search, Sparkles, Trash2, Wrench, X,
+  AlertTriangle, Check, ChevronRight, Code2, Download, Eye, FileCode2, Loader, Package, RefreshCw, RotateCcw, Search, Sparkles, Trash2, Users, Wrench, X,
 } from 'lucide-react'
 import { api } from '../api/client'
-import type { BundleSkillConfig, SkillMdPayload, SkillPoolItem, SkillProbeResult } from '../types'
+import type { BundleSkillConfig, SkillMdPayload, SkillPoolItem, SkillProbeResult, Studio } from '../types'
 import { useI18n } from '../i18n/useI18n'
 import './SkillPool.css'
 
@@ -62,6 +62,12 @@ export default function SkillPool() {
   const [aiResultMsg, setAiResultMsg] = useState('')
   const [editingName, setEditingName] = useState<Record<string, string>>({})
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({})
+  const [assignmentSkill, setAssignmentSkill] = useState<SkillPoolItem | null>(null)
+  const [assignmentTeams, setAssignmentTeams] = useState<Studio[]>([])
+  const [assignmentTeamId, setAssignmentTeamId] = useState('')
+  const [assignmentMemberId, setAssignmentMemberId] = useState('')
+  const [assignmentLoading, setAssignmentLoading] = useState(false)
+  const [assignmentMsg, setAssignmentMsg] = useState('')
 
   // URL probe 实时预览（贴上去后 500ms 识别一次）
   const [probe, setProbe] = useState<SkillProbeResult | null>(null)
@@ -102,6 +108,16 @@ export default function SkillPool() {
     }
     return acc
   }, [skills, t])
+
+  const assignmentTeam = useMemo(
+    () => assignmentTeams.find(team => team.id === assignmentTeamId) || null,
+    [assignmentTeamId, assignmentTeams],
+  )
+
+  const assignmentMember = useMemo(
+    () => assignmentTeam?.sub_agents.find(member => member.id === assignmentMemberId) || null,
+    [assignmentMemberId, assignmentTeam],
+  )
 
   // URL 变化时 debounce 调 /skills/probe，用于在输入框下方展示识别结果
   useEffect(() => {
@@ -181,18 +197,60 @@ export default function SkillPool() {
     }
   }
 
+  const openAssignment = async (skill: SkillPoolItem) => {
+    setAssignmentSkill(skill)
+    setAssignmentMsg('')
+    setAssignmentLoading(true)
+    try {
+      const teams = await api.getStudios()
+      setAssignmentTeams(teams)
+      const firstTeam = teams[0]
+      setAssignmentTeamId(firstTeam?.id || '')
+      setAssignmentMemberId(firstTeam?.sub_agents?.[0]?.id || '')
+    } catch (e) {
+      setAssignmentTeams([])
+      setAssignmentMsg(extractApiError(e, t('skillPool.opFailed')))
+    } finally {
+      setAssignmentLoading(false)
+    }
+  }
+
+  const handleAssignmentTeamChange = (teamId: string) => {
+    setAssignmentTeamId(teamId)
+    const nextTeam = assignmentTeams.find(team => team.id === teamId)
+    setAssignmentMemberId(nextTeam?.sub_agents?.[0]?.id || '')
+  }
+
+  const handleAssignSkill = async () => {
+    if (!assignmentSkill || !assignmentTeam || !assignmentMember) return
+    setAssignmentLoading(true)
+    setAssignmentMsg('')
+    try {
+      const nextSkills = Array.from(new Set([...(assignmentMember.skills || []), assignmentSkill.slug]))
+      await api.updateMember(assignmentTeam.id, assignmentMember.id, { skills: nextSkills })
+      setAssignmentMsg(t('skillPool.assignSuccess', { role: assignmentMember.role }))
+      const teams = await api.getStudios()
+      setAssignmentTeams(teams)
+    } catch (e) {
+      setAssignmentMsg(extractApiError(e, t('skillPool.opFailed')))
+    } finally {
+      setAssignmentLoading(false)
+    }
+  }
+
   const handleImport = async () => {
     if (!importDraft.url.trim()) return
     setBusy(true)
     setError('')
     try {
-      await api.importSkill({
+      const imported = await api.importSkill({
         url: importDraft.url.trim(),
         override_slug: importDraft.overrideSlug.trim() || null,
         category: importDraft.category.trim() || t('skillPool.categoryImport'),
       })
       setImportDraft(EMPTY_IMPORT)
       await load()
+      await openAssignment(imported)
     } catch (e) {
       setError(extractApiError(e, t('skillPool.opFailed')))
     } finally {
@@ -215,6 +273,7 @@ export default function SkillPool() {
       setAiResultMsg(res.message || t('skillPool.generatedOk'))
       setAiDraft(EMPTY_AI)
       await load()
+      if (res.skill) await openAssignment(res.skill)
     } catch (e) {
       setError(extractApiError(e, t('skillPool.opFailed')))
     } finally {
@@ -301,6 +360,54 @@ export default function SkillPool() {
           <AlertTriangle size={15} />
           <span>{error}</span>
         </div>
+      )}
+
+      {assignmentSkill && (
+        <section className="skill-pool-assignment">
+          <div className="skill-pool-assignment__title">
+            <Users size={16} />
+            <strong>{t('skillPool.assignTitle')}</strong>
+            <code>{assignmentSkill.slug}</code>
+          </div>
+          <div className="skill-pool-assignment__controls">
+            <select
+              className="input-base"
+              value={assignmentTeamId}
+              onChange={e => handleAssignmentTeamChange(e.target.value)}
+              disabled={assignmentLoading || assignmentTeams.length === 0}
+            >
+              {assignmentTeams.map(team => (
+                <option key={team.id} value={team.id}>{team.scenario}</option>
+              ))}
+            </select>
+            <select
+              className="input-base"
+              value={assignmentMemberId}
+              onChange={e => setAssignmentMemberId(e.target.value)}
+              disabled={assignmentLoading || !assignmentTeam || assignmentTeam.sub_agents.length === 0}
+            >
+              {(assignmentTeam?.sub_agents || []).map(member => (
+                <option key={member.id} value={member.id}>{member.role}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={handleAssignSkill}
+              disabled={assignmentLoading || !assignmentSkill || !assignmentMember}
+            >
+              {assignmentLoading ? <Loader size={14} className="animate-pulse" /> : <Check size={14} />}
+              {t('skillPool.assignNow')}
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={() => setAssignmentSkill(null)} disabled={assignmentLoading}>
+              {t('skillPool.assignLater')}
+            </button>
+          </div>
+          {assignmentTeams.length === 0 && !assignmentLoading && (
+            <p>{t('skillPool.noTeamForAssign')}</p>
+          )}
+          {assignmentMsg && <p>{assignmentMsg}</p>}
+        </section>
       )}
 
       {/* ── 导入区 ─────────────────────────────────────────────────── */}
@@ -563,6 +670,9 @@ export default function SkillPool() {
                             )}
                           </>
                         )}
+                        <button type="button" className="btn btn-icon" onClick={() => openAssignment(skill)} title={t('skillPool.assignToEmployee')} disabled={busy || !skill.enabled}>
+                          <Users size={14} />
+                        </button>
                         {!skill.builtin && (
                           <button type="button" className="btn btn-icon icon-danger" onClick={() => handleDelete(skill)} title={t('skillPool.deleteTitle')} disabled={busy}>
                             <Trash2 size={14} />

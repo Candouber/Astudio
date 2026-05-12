@@ -1,5 +1,7 @@
 import asyncio
 import json
+import time
+from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from loguru import logger
@@ -8,6 +10,7 @@ from agents.context import ContextBuilder
 from services.attachments import task_has_attachments
 from services.llm_service import llm_service
 from storage.config_store import ConfigStore
+from storage.task_store import TaskStore
 from tools.context import ToolContext, reset_current_tool_context, set_current_tool_context
 from tools.executor import execute_tool
 from tools.registry import build_tool_schemas
@@ -48,6 +51,35 @@ _TASK_ATTACHMENT_HELPERS = [
     "read_pdf_text",
     "image_metadata",
 ]
+
+
+async def _record_step_event(
+    *,
+    task_id: Optional[str],
+    sub_task_id: Optional[str],
+    event_type: str,
+    label: str = "",
+    status: str = "ok",
+    started_at: Optional[str] = None,
+    duration_ms: Optional[int] = None,
+    metadata: Optional[dict[str, Any]] = None,
+) -> None:
+    if not task_id:
+        return
+    try:
+        await TaskStore().record_step_event(
+            task_id=task_id,
+            sub_task_id=sub_task_id,
+            event_type=event_type,
+            label=label,
+            status=status,
+            started_at=started_at,
+            ended_at=datetime.now().isoformat(),
+            duration_ms=duration_ms,
+            metadata=metadata,
+        )
+    except Exception as err:
+        logger.debug(f"[sub_agent] record_step_event failed: {err}")
 
 
 def _truncate_observation(text: str) -> str:
@@ -267,6 +299,13 @@ class SubAgentExecutor:
                     await _emit(f"思考中...（第 {step + 1} 步）" if zh_progress else f"Thinking... (step {step + 1})")
 
                 try:
+                    llm_started_at = datetime.now().isoformat()
+                    llm_t0 = time.perf_counter()
+                    input_chars = sum(
+                        len(str(message.get("content") or ""))
+                        for message in history
+                        if isinstance(message, dict)
+                    )
                     response, step_tokens = await llm_service.chat_with_usage(
                         messages=history,
                         role="sub_agent",
@@ -275,8 +314,49 @@ class SubAgentExecutor:
                         tools=current_tools,
                         tool_choice=tool_choice,
                     )
+                    llm_duration_ms = int((time.perf_counter() - llm_t0) * 1000)
                     total_tokens += step_tokens
+                    await _record_step_event(
+                        task_id=task_id,
+                        sub_task_id=sub_task_id,
+                        event_type="llm_call",
+                        label=f"ReAct step {step + 1}",
+                        status="ok",
+                        started_at=llm_started_at,
+                        duration_ms=llm_duration_ms,
+                        metadata={
+                            "agent_role": agent_role,
+                            "react_step": step + 1,
+                            "force_finalization": force_finalization,
+                            "model": llm_service.get_model_display_name(
+                                llm_service.get_model_for_role("sub_agent")
+                            ),
+                            "history_messages": len(history),
+                            "input_chars": input_chars,
+                            "available_tools": len(current_tools or []),
+                            "tool_choice": tool_choice,
+                            "step_tokens": step_tokens,
+                            "total_tokens": total_tokens,
+                            "output_chars": len(str(_get_response_field(response, "content") or "")),
+                            "tool_calls": len(_get_response_field(response, "tool_calls") or []),
+                        },
+                    )
                 except Exception as llm_err:
+                    llm_duration_ms = int((time.perf_counter() - llm_t0) * 1000) if "llm_t0" in locals() else 0
+                    await _record_step_event(
+                        task_id=task_id,
+                        sub_task_id=sub_task_id,
+                        event_type="llm_call",
+                        label=f"ReAct step {step + 1}",
+                        status="failed",
+                        started_at=locals().get("llm_started_at"),
+                        duration_ms=llm_duration_ms,
+                        metadata={
+                            "agent_role": agent_role,
+                            "react_step": step + 1,
+                            "error": f"{type(llm_err).__name__}: {llm_err}",
+                        },
+                    )
                     logger.error(f"[{agent_role}] LLM 调用失败（step {step+1}）: {llm_err}")
                     await _emit(
                         f"模型调用失败: {type(llm_err).__name__}"
@@ -418,14 +498,49 @@ class SubAgentExecutor:
 
                     async def _exec(tc, args: Dict[str, Any], controller_result: Optional[tuple[str, bool]]):
                         tool_name = tc.function.name
+                        tool_started_at = datetime.now().isoformat()
+                        tool_t0 = time.perf_counter()
                         if controller_result is not None:
                             observation, failed = controller_result
+                            await _record_step_event(
+                                task_id=task_id,
+                                sub_task_id=sub_task_id,
+                                event_type="tool_call",
+                                label=tool_name,
+                                status="blocked",
+                                started_at=tool_started_at,
+                                duration_ms=int((time.perf_counter() - tool_t0) * 1000),
+                                metadata={
+                                    "agent_role": agent_role,
+                                    "react_step": step + 1,
+                                    "args_keys": list(args.keys()),
+                                    "result_chars": len(observation),
+                                    "failed": failed,
+                                    "blocked_by_controller": True,
+                                },
+                            )
                             return tc, observation, failed
                         try:
                             result = await execute_tool(tool_name, args)
                         except Exception as e:
                             result = f"[Tool execution error] {type(e).__name__}: {e}"
                         observation, failed = _structured_observation(tool_name, str(result))
+                        await _record_step_event(
+                            task_id=task_id,
+                            sub_task_id=sub_task_id,
+                            event_type="tool_call",
+                            label=tool_name,
+                            status="failed" if failed else "ok",
+                            started_at=tool_started_at,
+                            duration_ms=int((time.perf_counter() - tool_t0) * 1000),
+                            metadata={
+                                "agent_role": agent_role,
+                                "react_step": step + 1,
+                                "args_keys": list(args.keys()),
+                                "result_chars": len(observation),
+                                "failed": failed,
+                            },
+                        )
                         logger.info(
                             f"[{agent_role}] tool_result step={step + 1} "
                             f"name={tool_name} failed={failed} len={len(observation)}"

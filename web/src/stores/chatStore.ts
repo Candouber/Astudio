@@ -9,7 +9,7 @@ export interface ChatMessage {
   taskId?: string
   taskStatus?: string
   taskPhase?: string
-  // 路由后由后端推送：任务被分配到的工作室
+  // 路由后由后端推送：任务被分配到的团队
   studioId?: string
   studioName?: string
   attachments?: { name: string; size: number }[]

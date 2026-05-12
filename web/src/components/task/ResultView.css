@@ -288,6 +288,108 @@
   margin-left: 4px;
 }
 
+.timing-panel {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-primary);
+}
+
+.timing-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.timing-panel__head h3 {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.88rem;
+}
+
+.timing-panel__head span {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.timing-panel__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.timing-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 2fr;
+  gap: 8px 12px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border-color);
+}
+
+.timing-row__main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.timing-row__main strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+}
+
+.timing-row__main span,
+.timing-row__largest {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+}
+
+.timing-row__chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.timing-row__chips span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 99px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+
+.timing-row__chips .timing-row__chip--warn {
+  color: var(--accent-danger);
+  background: var(--accent-danger-light);
+}
+
+.timing-row__largest {
+  grid-column: 2;
+}
+
+@media (max-width: 760px) {
+  .timing-row {
+    grid-template-columns: 1fr;
+  }
+
+  .timing-row__largest {
+    grid-column: 1;
+  }
+}
+
 .result-view__warning {
   display: flex;
   align-items: center;
@@ -639,6 +741,20 @@
   margin: 0;
   color: var(--color-danger, #dc2626);
   font-size: 0.8rem;
+}
+
+mark.ann-hl {
+  background: color-mix(in srgb, var(--accent-brand) 18%, transparent);
+  color: inherit;
+  padding: 1px 2px;
+  border-radius: 3px;
+  cursor: pointer;
+  border-bottom: 2px solid var(--accent-brand);
+  transition: background var(--transition-fast);
+}
+
+mark.ann-hl:hover {
+  background: color-mix(in srgb, var(--accent-brand) 30%, transparent);
 }
 
 mark.ann-hl.ann-hl--focus {

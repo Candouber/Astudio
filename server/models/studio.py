@@ -32,6 +32,9 @@ class Studio(BaseModel):
     """工作室"""
     id: str
     scenario: str
+    kind: str = "team"
+    is_default: bool = False
+    is_hidden: bool = False
     is_working: bool = False
     total_tokens: int = 0
     sub_agents: list[SubAgentConfig] = Field(default_factory=list)

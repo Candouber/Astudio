@@ -15,6 +15,7 @@ from tools.sandbox_runtime import (
     build_sandbox_env,
     find_preview_index,
     prepare_sandbox_command,
+    safe_iteration_id,
     terminate_process_tree,
 )
 
@@ -53,11 +54,19 @@ sandbox_store = SandboxStore()
 async def ensure_sandbox() -> str:
     context = get_current_tool_context()
     sandbox, created = await sandbox_store.ensure_for_task(context.task_id)
+    iteration_id = await _current_iteration_id(context.task_id)
+    output_dir = _iteration_output_dir(iteration_id)
     return (
         f"[Sandbox {'created' if created else 'ready'}]\n"
         f"sandbox_id: {sandbox.id}\n"
         f"path: {sandbox.path}\n"
         f"dev_port: {sandbox.dev_port}\n"
+        f"current_iteration_id: {iteration_id or '(unknown)'}\n"
+        f"canonical_output_dir: {output_dir}\n"
+        f"canonical_page_entry: {output_dir}/index.html\n"
+        "Output convention: write final deliverables for this run under canonical_output_dir. "
+        "If this run iterates on an earlier result, copy the previous usable artifact into canonical_output_dir first, "
+        "then modify the copied files so this run remains a complete snapshot.\n"
         "Use this port when starting a development server. The system also injects PORT/VITE_PORT/ASTUDIO_SANDBOX_PORT.\n"
         "Read AGENT_GUIDE.md first, and update RUNBOOK.md after completion."
     )
@@ -167,7 +176,8 @@ async def sandbox_run_command(command: str, cwd: str = ".", timeout_seconds: int
     temp_id = uuid.uuid4().hex[:8]
     stdout_path = runs_dir / f"tool-{temp_id}.stdout.log"
     stderr_path = runs_dir / f"tool-{temp_id}.stderr.log"
-    prepared_command, preview_url = prepare_sandbox_command(command, sandbox, workdir)
+    iteration_id = await _current_iteration_id(context.task_id)
+    prepared_command, preview_url = prepare_sandbox_command(command, sandbox, workdir, iteration_id=iteration_id)
     stdout_f = stdout_path.open("wb")
     stderr_f = stderr_path.open("wb")
     try:
@@ -230,11 +240,14 @@ async def sandbox_run_command(command: str, cwd: str = ".", timeout_seconds: int
 
 
 async def sandbox_start_preview() -> str:
+    context = get_current_tool_context()
     sandbox, _ = await _current_sandbox()
     root = Path(sandbox.path)
-    index_path = find_preview_index(root)
+    iteration_id = await _current_iteration_id(context.task_id)
+    index_path = find_preview_index(root, iteration_id=iteration_id)
     if not index_path:
-        candidates = ", ".join(PREVIEW_INDEX_CANDIDATES)
+        iterated = f"{_iteration_output_dir(iteration_id)}/index.html"
+        candidates = ", ".join([iterated, "output/*/index.html", *PREVIEW_INDEX_CANDIDATES])
         return f"[Preview failed] No previewable index.html was found. Checked: {candidates}."
     index = index_path.relative_to(root).as_posix()
     preview_url = f"/api/sandboxes/{sandbox.id}/preview/{index}"
@@ -245,6 +258,18 @@ async def sandbox_start_preview() -> str:
 async def _current_sandbox():
     context = get_current_tool_context()
     return await sandbox_store.ensure_for_task(context.task_id)
+
+
+async def _current_iteration_id(task_id: str) -> str:
+    try:
+        return await sandbox_store.task_store.get_current_iteration_id(task_id) or ""
+    except Exception:
+        return ""
+
+
+def _iteration_output_dir(iteration_id: str | None) -> str:
+    safe_id = safe_iteration_id(iteration_id)
+    return f"output/{safe_id}" if safe_id else "output/current"
 
 
 def _safe_import_name(value: str) -> str:

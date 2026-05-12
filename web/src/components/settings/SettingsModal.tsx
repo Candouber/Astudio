@@ -110,6 +110,8 @@ function normalizeSettingsConfig(config: AppConfig): AppConfig {
   cloned.advanced = {
     max_react_steps: cloned.advanced?.max_react_steps ?? 30,
     max_search_tool_calls: cloned.advanced?.max_search_tool_calls ?? 4,
+    planning_stale_seconds: cloned.advanced?.planning_stale_seconds ?? 900,
+    executing_stale_seconds: cloned.advanced?.executing_stale_seconds ?? 1200,
   }
   return cloned
 }
@@ -556,9 +558,44 @@ export default function SettingsModal() {
                       )}
                     </div>
 
-                    <div className="oauth-model-hint">
-                      <span>{t('settings.availableModels')}</span>
-                      {provider.models.map(m => <code key={m}>{m}</code>)}
+                    <div className="setting-group" style={{ marginTop: '16px', marginBottom: '16px' }}>
+                      <label>{t('settings.modelsListLabel')}</label>
+                      <p className="text-muted text-xs mb-2">
+                        {t('settings.modelsListHelp')}
+                      </p>
+                      <textarea
+                        className="input-base"
+                        rows={5}
+                        style={{
+                          resize: 'vertical',
+                          fontFamily: 'var(--font-mono, monospace)',
+                          fontSize: '13px',
+                        }}
+                        placeholder={provider.name === 'github_copilot' ? 'claude-sonnet-4-5' : 'gpt-5.4'}
+                        value={serializeProviderModels(provider)}
+                        onChange={(e) => handleModelsTextChange(i, e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </div>
+
+                    <div className="setting-group" style={{ marginBottom: '16px' }}>
+                      <label>{t('settings.displayNamesLabel')}</label>
+                      <p className="text-muted text-xs mb-2">
+                        {t('settings.displayNamesHelp')}
+                      </p>
+                      <textarea
+                        className="input-base"
+                        rows={3}
+                        style={{
+                          resize: 'vertical',
+                          fontFamily: 'var(--font-mono, monospace)',
+                          fontSize: '13px',
+                        }}
+                        placeholder={provider.name === 'github_copilot' ? 'claude-sonnet-4-5 = Claude Sonnet 4.5' : 'gpt-5.4 = GPT-5.4'}
+                        value={serializeModelDisplayNames(provider)}
+                        onChange={(e) => handleModelDisplayNamesChange(i, e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                      />
                     </div>
                   </div>
                 ) : (
@@ -920,6 +957,50 @@ export default function SettingsModal() {
             onChange={e => handleAdvancedChange(
               'max_search_tool_calls',
               clampNumber(Number(e.target.value), 0, 50, 4),
+            )}
+          />
+        </div>
+        <div className="advanced-setting-card">
+          <div className="advanced-setting-card__header">
+            <SlidersHorizontal size={18} />
+            <div>
+              <label htmlFor="planning-stale-seconds">{t('settings.planningStaleSeconds')}</label>
+              <p>{t('settings.planningStaleSecondsHelp')}</p>
+            </div>
+          </div>
+          <input
+            id="planning-stale-seconds"
+            type="number"
+            min="60"
+            max="86400"
+            step="30"
+            className="input-base"
+            value={localConfig.advanced.planning_stale_seconds}
+            onChange={e => handleAdvancedChange(
+              'planning_stale_seconds',
+              clampNumber(Number(e.target.value), 60, 86400, 900),
+            )}
+          />
+        </div>
+        <div className="advanced-setting-card">
+          <div className="advanced-setting-card__header">
+            <SlidersHorizontal size={18} />
+            <div>
+              <label htmlFor="executing-stale-seconds">{t('settings.executingStaleSeconds')}</label>
+              <p>{t('settings.executingStaleSecondsHelp')}</p>
+            </div>
+          </div>
+          <input
+            id="executing-stale-seconds"
+            type="number"
+            min="60"
+            max="86400"
+            step="30"
+            className="input-base"
+            value={localConfig.advanced.executing_stale_seconds}
+            onChange={e => handleAdvancedChange(
+              'executing_stale_seconds',
+              clampNumber(Number(e.target.value), 60, 86400, 1200),
             )}
           />
         </div>

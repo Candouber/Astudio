@@ -13,10 +13,19 @@ export function clearHighlights(container: HTMLElement): void {
   })
 }
 
-export function highlightText(container: HTMLElement, text: string, annId: string): void {
-  const search = text.replace(/\s+/g, ' ').trim()
-  if (!search || search.length < 2) return
+type IndexedChar = {
+  node: Text
+  offset: number
+  endOffset: number
+}
 
+type TextIndex = {
+  text: string
+  map: IndexedChar[]
+  nodes: Text[]
+}
+
+function collectTextNodes(container: HTMLElement): Text[] {
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
     acceptNode: (node) => {
       let p: Node | null = node.parentNode
@@ -33,65 +42,106 @@ export function highlightText(container: HTMLElement, text: string, annId: strin
   const textNodes: Text[] = []
   let n: Node | null
   while ((n = walker.nextNode())) textNodes.push(n as Text)
+  return textNodes
+}
 
-  for (const tn of textNodes) {
-    const nodeText = tn.textContent || ''
-    const idx = nodeText.indexOf(search)
-    if (idx === -1) continue
-    const range = document.createRange()
-    range.setStart(tn, idx)
-    range.setEnd(tn, idx + search.length)
-    const mark = document.createElement('mark')
-    mark.className = 'ann-hl'
-    mark.dataset.annId = annId
-    mark.title = '点击查看批注'
-    try {
-      range.surroundContents(mark)
-      return
-    } catch {
-      /* 继续尝试 */
+function buildTextIndex(nodes: Text[], whitespace: 'collapse' | 'remove'): TextIndex {
+  const chars: string[] = []
+  const map: IndexedChar[] = []
+  let lastWasWhitespace = false
+
+  for (const node of nodes) {
+    const value = node.textContent || ''
+    for (let offset = 0; offset < value.length; offset += 1) {
+      const ch = value[offset]
+      const isWs = /\s/.test(ch)
+      if (isWs) {
+        if (whitespace === 'remove') continue
+        if (lastWasWhitespace) continue
+        chars.push(' ')
+        map.push({ node, offset, endOffset: offset + 1 })
+        lastWasWhitespace = true
+      } else {
+        chars.push(ch)
+        map.push({ node, offset, endOffset: offset + 1 })
+        lastWasWhitespace = false
+      }
     }
   }
 
-  const normalizedAll = textNodes.map((tn) => tn.textContent || '').join('')
-  const startInAll = normalizedAll.indexOf(search)
-  if (startInAll === -1) return
-  const endInAll = startInAll + search.length
+  return { text: chars.join(''), map, nodes }
+}
 
-  let acc = 0
-  let startNode: Text | null = null
-  let startOffset = 0
-  let endNode: Text | null = null
-  let endOffset = 0
-  for (const tn of textNodes) {
-    const len = (tn.textContent || '').length
-    if (!startNode && startInAll < acc + len) {
-      startNode = tn
-      startOffset = startInAll - acc
-    }
-    if (!endNode && endInAll <= acc + len) {
-      endNode = tn
-      endOffset = endInAll - acc
+function wrapMatch(index: TextIndex, start: number, length: number, annId: string): boolean {
+  const first = index.map[start]
+  const last = index.map[start + length - 1]
+  if (!first || !last) return false
+
+  const segments: Array<{ node: Text; startOffset: number; endOffset: number }> = []
+  let active = false
+
+  for (const node of index.nodes) {
+    const valueLength = (node.textContent || '').length
+    if (node === first.node && node === last.node) {
+      segments.push({ node, startOffset: first.offset, endOffset: last.endOffset })
       break
     }
-    acc += len
+    if (node === first.node) {
+      active = true
+      segments.push({ node, startOffset: first.offset, endOffset: valueLength })
+      continue
+    }
+    if (node === last.node) {
+      segments.push({ node, startOffset: 0, endOffset: last.endOffset })
+      break
+    }
+    if (active) {
+      segments.push({ node, startOffset: 0, endOffset: valueLength })
+    }
   }
-  if (!startNode || !endNode) return
-  try {
+
+  let wrapped = false
+  for (let i = segments.length - 1; i >= 0; i -= 1) {
+    const segment = segments[i]
+    if (segment.endOffset <= segment.startOffset) continue
+    const value = segment.node.textContent || ''
+    if (!value.slice(segment.startOffset, segment.endOffset).trim()) continue
+
     const range = document.createRange()
-    range.setStart(startNode, startOffset)
-    range.setEnd(endNode, endOffset)
+    range.setStart(segment.node, segment.startOffset)
+    range.setEnd(segment.node, segment.endOffset)
     const mark = document.createElement('mark')
     mark.className = 'ann-hl'
     mark.dataset.annId = annId
     mark.title = '点击查看批注'
     try {
       range.surroundContents(mark)
+      wrapped = true
     } catch {
-      /* 跨块级边界失败 — 跳过 */
+      /* 单个文本节点仍可能因浏览器 range 状态异常失败，跳过该片段。 */
     }
-  } catch {
-    /* 无效 range — 跳过 */
+  }
+
+  return wrapped
+}
+
+export function highlightText(container: HTMLElement, text: string, annId: string): void {
+  const collapsedSearch = text.replace(/\s+/g, ' ').trim()
+  if (!collapsedSearch || collapsedSearch.length < 2) return
+
+  const textNodes = collectTextNodes(container)
+  const collapsedIndex = buildTextIndex(textNodes, 'collapse')
+  const collapsedStart = collapsedIndex.text.indexOf(collapsedSearch)
+  if (collapsedStart !== -1 && wrapMatch(collapsedIndex, collapsedStart, collapsedSearch.length, annId)) {
+    return
+  }
+
+  const compactSearch = text.replace(/\s+/g, '').trim()
+  if (!compactSearch || compactSearch.length < 2) return
+  const compactIndex = buildTextIndex(collectTextNodes(container), 'remove')
+  const compactStart = compactIndex.text.indexOf(compactSearch)
+  if (compactStart !== -1) {
+    wrapMatch(compactIndex, compactStart, compactSearch.length, annId)
   }
 }
 

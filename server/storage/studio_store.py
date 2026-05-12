@@ -13,6 +13,9 @@ from typing import Optional
 from models.studio import Studio, StudioCard, StudioCreate, StudioUpdate, SubAgentConfig
 from storage.database import STUDIOS_DIR, get_db
 
+SYSTEM_STUDIO_ID = "studio_0"
+DEFAULT_TEAM_ID = "default_team"
+
 # 按 studio_id 锁 read-modify-write 型更新，避免并发覆盖
 _studio_card_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
@@ -32,7 +35,7 @@ class StudioStore:
         db = await get_db()
         try:
             cursor = await db.execute(
-                "SELECT * FROM studios ORDER BY last_active DESC NULLS LAST, created_at DESC"
+                "SELECT * FROM studios WHERE COALESCE(is_hidden, 0) = 0 ORDER BY is_default DESC, last_active DESC NULLS LAST, created_at DESC"
             )
             rows = await cursor.fetchall()
             studios = []
@@ -54,6 +57,125 @@ class StudioStore:
         finally:
             await db.close()
 
+    async def list_business_teams(self) -> list[Studio]:
+        """获取用户可见的业务团队，不包含内部系统团队。"""
+        db = await get_db()
+        try:
+            cursor = await db.execute(
+                """SELECT * FROM studios
+                   WHERE COALESCE(kind, 'team') = 'team' AND COALESCE(is_hidden, 0) = 0
+                   ORDER BY is_default DESC, last_active DESC NULLS LAST, created_at DESC"""
+            )
+            rows = await cursor.fetchall()
+            return [await self._row_to_studio(dict(row)) for row in rows]
+        finally:
+            await db.close()
+
+    async def count_business_teams(self) -> int:
+        """统计用户可见的业务团队数量，不包含内部系统团队。"""
+        db = await get_db()
+        try:
+            cursor = await db.execute(
+                """SELECT COUNT(*) AS count
+                   FROM studios
+                   WHERE COALESCE(kind, 'team') = 'team' AND COALESCE(is_hidden, 0) = 0"""
+            )
+            row = await cursor.fetchone()
+            return int((dict(row) if row else {}).get("count") or 0)
+        finally:
+            await db.close()
+
+    async def get_default_team(self) -> Optional[Studio]:
+        await self.ensure_default_team()
+        default = await self.get(DEFAULT_TEAM_ID)
+        if default:
+            return default
+        teams = await self.list_business_teams()
+        return teams[0] if teams else None
+
+    async def ensure_default_team(self) -> Optional[Studio]:
+        """幂等确保默认业务团队存在。数据库初始化会创建；这里兜底运行时旧库。"""
+        now = datetime.now().isoformat()
+        db = await get_db()
+        try:
+            await db.execute(
+                """INSERT OR IGNORE INTO studios
+                   (id, scenario, description, core_capabilities, kind, is_default, is_hidden, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, 'team', 1, 0, ?, ?)""",
+                (
+                    DEFAULT_TEAM_ID,
+                    "默认团队",
+                    "默认业务团队，承接普通任务规划、执行与结果沉淀",
+                    json.dumps(["研究分析", "工程实现", "文档整理", "质量审阅"], ensure_ascii=False),
+                    now,
+                    now,
+                ),
+            )
+            await db.execute(
+                "UPDATE studios SET kind = 'team', is_default = 1, is_hidden = 0 WHERE id = ?",
+                (DEFAULT_TEAM_ID,),
+            )
+            default_members = [
+                (
+                    "default_researcher",
+                    "研究员",
+                    ["web_search", "browser_search", "file_analysis", "read_uploaded_file", "read_pdf_text", "read_excel_sheet"],
+                    "# 研究员\n\n负责信息检索、资料阅读、附件分析和事实核验。",
+                ),
+                (
+                    "default_engineer",
+                    "工程师",
+                    ["execute_code", "read_file", "write_file", "list_files", "sandbox_run_command", "sandbox_read_file", "sandbox_write_file", "sandbox_list_files", "sandbox_start_preview"],
+                    "# 工程师\n\n负责代码实现、文件操作、沙箱执行、页面预览和技术验证。",
+                ),
+                (
+                    "default_writer",
+                    "文档整理员",
+                    ["read_file", "write_file", "file_analysis", "read_uploaded_file"],
+                    "# 文档整理员\n\n负责把过程材料整理成结构化文档、报告、说明和交付笔记。",
+                ),
+                (
+                    "default_reviewer",
+                    "审阅员",
+                    ["read_file", "file_analysis", "list_files"],
+                    "# 审阅员\n\n负责检查结果完整性、风险、遗漏、格式和可执行性。",
+                ),
+            ]
+            team_dir = self._ensure_studio_dir(DEFAULT_TEAM_ID)
+            for member_id, role, skills, agent_md in default_members:
+                member_dir = team_dir / "sub_agents" / member_id
+                member_dir.mkdir(parents=True, exist_ok=True)
+                agent_path = member_dir / "agent.md"
+                soul_path = member_dir / "soul.md"
+                if not agent_path.exists():
+                    agent_path.write_text(agent_md, encoding="utf-8")
+                if not soul_path.exists():
+                    soul_path.write_text("# 记忆\n\n暂无。\n", encoding="utf-8")
+                await db.execute(
+                    """INSERT OR IGNORE INTO sub_agent_configs
+                       (id, studio_id, role, agent_md_path, soul_path, skills)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        member_id,
+                        DEFAULT_TEAM_ID,
+                        role,
+                        str(agent_path),
+                        str(soul_path),
+                        json.dumps(skills, ensure_ascii=False),
+                    ),
+                )
+                await db.execute(
+                    """UPDATE sub_agent_configs
+                       SET agent_md_path = COALESCE(NULLIF(agent_md_path, ''), ?),
+                           soul_path = COALESCE(NULLIF(soul_path, ''), ?)
+                       WHERE id = ?""",
+                    (str(agent_path), str(soul_path), member_id),
+                )
+            await db.commit()
+        finally:
+            await db.close()
+        return await self.get(DEFAULT_TEAM_ID)
+
     async def create(self, req: StudioCreate) -> Studio:
         """创建工作室"""
         studio_id = str(uuid.uuid4())[:8]
@@ -73,8 +195,9 @@ class StudioStore:
         db = await get_db()
         try:
             await db.execute(
-                """INSERT INTO studios (id, scenario, description, core_capabilities, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO studios
+                   (id, scenario, description, core_capabilities, kind, is_default, is_hidden, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, 'team', 0, 0, ?, ?)""",
                 (studio_id, req.scenario, req.description, json.dumps([]), now.isoformat(), now.isoformat())
             )
 
@@ -134,6 +257,10 @@ class StudioStore:
 
     async def delete(self, studio_id: str) -> bool:
         """删除工作室"""
+        if studio_id in {SYSTEM_STUDIO_ID, DEFAULT_TEAM_ID}:
+            return False
+        if await self.count_business_teams() <= 1:
+            return False
         db = await get_db()
         try:
             cursor = await db.execute("DELETE FROM studios WHERE id = ?", (studio_id,))
@@ -154,7 +281,9 @@ class StudioStore:
         db = await get_db()
         try:
             cursor = await db.execute(
-                "SELECT id, scenario, description, core_capabilities, recent_topics, user_facts, task_count, last_active FROM studios"
+                """SELECT id, scenario, description, core_capabilities, recent_topics, user_facts, task_count, last_active
+                   FROM studios
+                   WHERE COALESCE(kind, 'team') = 'team' AND COALESCE(is_hidden, 0) = 0"""
             )
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
@@ -207,6 +336,9 @@ class StudioStore:
         return Studio(
             id=studio_id,
             scenario=row["scenario"],
+            kind=row.get("kind") or "team",
+            is_default=bool(row.get("is_default") or 0),
+            is_hidden=bool(row.get("is_hidden") or 0),
             total_tokens=row.get("total_tokens", 0) or 0,
             sub_agents=sub_agents,
             card=StudioCard(

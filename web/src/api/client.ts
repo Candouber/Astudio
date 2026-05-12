@@ -2,6 +2,7 @@ import axios from 'axios'
 import type {
   Studio,
   Task,
+  TaskStepEvent,
   AppConfig,
   Annotation,
   Sandbox,
@@ -89,6 +90,8 @@ export const api = {
   },
   listTasks: () => httpClient.get<Task[]>('/tasks/').then(res => res.data),
   getTask: (id: string) => httpClient.get<Task>(`/tasks/${id}`).then(res => res.data),
+  listTaskStepEvents: (id: string) =>
+    httpClient.get<TaskStepEvent[]>(`/tasks/${id}/step-events`).then(res => res.data),
   updateTaskSubject: (id: string, subject: string) =>
     httpClient.put<Task>(`/tasks/${id}/subject`, { subject }).then(res => res.data),
   deleteTask: (id: string) => httpClient.delete(`/tasks/${id}`),

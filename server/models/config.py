@@ -126,6 +126,8 @@ class AdvancedConfig(BaseModel):
     """高级执行配置"""
     max_react_steps: int = Field(default=30, ge=1, le=100)
     max_search_tool_calls: int = Field(default=4, ge=0, le=50)
+    planning_stale_seconds: int = Field(default=900, ge=60, le=86400)
+    executing_stale_seconds: int = Field(default=1200, ge=60, le=86400)
 
 
 class AppConfig(BaseModel):

@@ -12,7 +12,7 @@ const en: TranslationTree = {
     generatedOk: 'Generated',
     title: 'Skill pool',
     introP1:
-      'Shared skills assignable to agents. After use_skill(slug), agents follow SKILL.md.',
+      'Skills are assignable capability packages. Tools are execution primitives; MCP is external connector access.',
     introP2:
       'Sources: ① Import from a ClawHub / SkillHub URL; ② AI-generate SKILL.md via skill_creator.',
     refresh: 'Refresh',
@@ -54,6 +54,12 @@ const en: TranslationTree = {
     loadingMd: 'Loading SKILL.md…',
     deleteConfirm:
       'Delete {{slug}}? Assignments to agents are not removed automatically.',
+    assignTitle: 'Assign Skill to employee',
+    assignNow: 'Assign',
+    assignLater: 'Later',
+    assignToEmployee: 'Assign to employee',
+    assignSuccess: 'Assigned to "{{role}}"',
+    noTeamForAssign: 'No team or employee is available yet.',
   },
 }
 

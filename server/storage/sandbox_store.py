@@ -433,7 +433,21 @@ class SandboxStore:
 
     @staticmethod
     def _infer_static_command(root: Path) -> dict | None:
-        for rel in ("index.html", "output/index.html", "deliverables/index.html", "public/index.html", "dist/index.html", "build/index.html"):
+        iterated_indexes = [
+            path for path in (root / "output").glob("*/index.html")
+            if path.is_file()
+        ]
+        iterated_indexes.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+        for path in iterated_indexes:
+            cwd_path = path.parent
+            rel_dir = cwd_path.relative_to(root).as_posix()
+            return {
+                "command": "python3 -m http.server",
+                "cwd": rel_dir,
+                "source": path.relative_to(root).as_posix(),
+            }
+
+        for rel in ("output/index.html", "index.html", "deliverables/index.html", "public/index.html", "dist/index.html", "build/index.html"):
             path = root / rel
             if path.exists() and path.is_file():
                 cwd_path = path.parent
@@ -518,7 +532,7 @@ Reserved development port: {sandbox.dev_port or "not allocated"}
 TBD.
 
 ## Page Preview
-If `index.html`, `output/index.html`, `deliverables/index.html`, or `public/index.html` is generated, open the preview from the AStudio sandbox detail page.
+For each run, prefer `output/<iteration_id>/index.html` for generated static pages so the task result page can list and preview artifacts by round. If another entry is necessary, document it here.
 
 ## Main Files
 TBD.
@@ -531,6 +545,9 @@ TBD.
 - Write all code, data, reports, and generated artifacts inside the current task sandbox.
 - Do not read or analyze paths outside this sandbox in place.
 - If the task references an external local path, import it into this sandbox first, then work only from the imported sandbox-relative copy.
+- If you generate a page or user-facing artifact, put the final deliverable under the current run's canonical output directory by default: `output/<iteration_id>/`.
+- For static pages, use `output/<iteration_id>/index.html` as the canonical entry and keep related CSS/JS/assets beside it or in `output/<iteration_id>/assets/`.
+- If the run iterates on a previous round, copy the previous round's usable artifact into the current `output/<iteration_id>/` first, then modify the copied files. Each round must remain a complete snapshot, not a partial patch.
 - If you generate a page, provide the start command and preview method.
 - If you start a development server, prefer the port from `PORT` / `VITE_PORT` / `ASTUDIO_SANDBOX_PORT`.
 - If you run scripts, record inputs, outputs, dependencies, and result files.

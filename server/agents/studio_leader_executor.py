@@ -13,14 +13,31 @@ from tools.registry import describe_available_skills
 from utils.language import is_chinese, response_language_instruction
 
 
-def _format_skills_for_prompt(skills: List[Dict[str, str]]) -> str:
-    """Format Skill pool entries as a Markdown table for leader planning."""
-    if not skills:
-        return "(No enabled skills are currently available.)"
-    lines = ["| slug | Name | Description |", "|---|---|---|"]
-    for s in skills:
-        desc = (s.get("description") or "").replace("|", "/").replace("\n", " ")
-        lines.append(f"| `{s['slug']}` | {s.get('name') or s['slug']} | {desc} |")
+def _summarize_agent_md(agent_md: str, limit: int = 420) -> str:
+    text = re.sub(r"\s+", " ", agent_md or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "..."
+
+
+def _format_employee_capabilities_for_prompt(sub_agents: list, skills: List[Dict[str, str]]) -> str:
+    """Format employee-owned skills so planning reads people first, raw skill pool second."""
+    if not sub_agents:
+        return "(No employees are configured for this team yet.)"
+    by_slug = {str(s.get("slug") or ""): s for s in skills}
+    lines = ["| Employee | Profile | Assigned Skills |", "|---|---|---|"]
+    for agent in sub_agents:
+        skill_labels = []
+        for slug in getattr(agent, "skills", []) or []:
+            meta = by_slug.get(slug) or {}
+            name = meta.get("name") or slug
+            skill_labels.append(f"`{slug}` ({name})")
+        profile = _summarize_agent_md(getattr(agent, "agent_md", "") or "")
+        lines.append(
+            f"| {getattr(agent, 'role', '') or 'Employee'} | "
+            f"{profile.replace('|', '/')} | "
+            f"{', '.join(skill_labels) if skill_labels else '(No assigned skills)'} |"
+        )
     return "\n".join(lines)
 
 
@@ -83,9 +100,7 @@ class StudioLeaderExecutor:
         self.task_store = TaskStore()
 
     async def plan_sub_tasks(self, task_id: str, studio_id: str, task_goal: str) -> Dict[str, Any]:
-        """
-        部门 Leader 拆解工作簿大目标，分配到下属员工，或决定新招聘。
-        """
+        """团队 Leader 拆解目标，并分配给现有员工。"""
         # Fetch the studio data
         studio = await self.studio_store.get(studio_id)
         if not studio:
@@ -94,11 +109,6 @@ class StudioLeaderExecutor:
 
         sub_agents = studio.sub_agents
         sub_agents_list = ", ".join([sa.role for sa in sub_agents]) if sub_agents else "No employees"
-        sub_agents_json = json.dumps(
-            [{"role": sa.role, "skills": sa.skills} for sa in sub_agents],
-            ensure_ascii=False
-        )
-
         facts = studio.card.user_facts or []
         user_facts_str = "\n".join(f"- {f}" for f in facts) if facts else ""
 
@@ -108,13 +118,24 @@ class StudioLeaderExecutor:
         recent_topics_str = "\n".join(f"- {t}" for t in topics[:10]) if topics else ""
         core_capabilities_str = "\n".join(f"- {c}" for c in capabilities[:15]) if capabilities else ""
 
-        # 可用 skill 运行时从 Skill 池动态拉，失败降级为空字符串（模板里有兜底文案）
+        # Leader 只看员工承载的能力，不直接阅读整池 Skill 说明，避免规划阶段上下文膨胀。
         try:
             available_skills = await describe_available_skills()
         except Exception as e:
-            logger.warning(f"Failed to read Skill pool; leader planning will use an empty skill list: {e}")
+            logger.warning(f"Failed to read Skill pool; leader planning will use employee skill slugs only: {e}")
             available_skills = []
-        available_skills_str = _format_skills_for_prompt(available_skills)
+        sub_agents_json = json.dumps(
+            [
+                {
+                    "role": sa.role,
+                    "profile": _summarize_agent_md(sa.agent_md),
+                    "assigned_skills": sa.skills,
+                }
+                for sa in sub_agents
+            ],
+            ensure_ascii=False,
+        )
+        employee_capabilities_str = _format_employee_capabilities_for_prompt(sub_agents, available_skills)
 
         system_prompt = ContextBuilder.build_leader_planning(
             studio_name=studio.scenario,
@@ -126,7 +147,7 @@ class StudioLeaderExecutor:
             recent_topics=recent_topics_str,
             core_capabilities=core_capabilities_str,
             task_count=studio.card.task_count or 0,
-            available_skills=available_skills_str,
+            available_skills=employee_capabilities_str,
             language_instruction=response_language_instruction(task_goal),
         )
 
@@ -152,7 +173,18 @@ class StudioLeaderExecutor:
 
             # 安全检查
             action = result.get("action")
-            if action not in ["plan", "recruit_employee", "need_clarification"]:
+            if action == "recruit_employee":
+                logger.warning("Leader requested recruit_employee; converting to existing-team fallback plan")
+                _log_plan_audit(task_id, studio_id, result, sub_agents, response_str, "recruitment_disabled")
+                return self._fallback_plan_or_recruit(
+                    task_goal,
+                    sub_agents,
+                    available_skills,
+                    "recruitment_disabled",
+                    allow_recruit=False,
+                )
+
+            if action not in ["plan", "need_clarification"]:
                 if _coerce_steps(result):
                     logger.warning(f"Leader 输出未知 action={action} 但包含 steps，回退为 plan")
                     action = "plan"
@@ -160,7 +192,13 @@ class StudioLeaderExecutor:
                 else:
                     logger.warning(f"Leader 输出未知 action={action}，使用规划兜底")
                     _log_plan_audit(task_id, studio_id, result, sub_agents, response_str, "unknown_action")
-                    return self._fallback_plan_or_recruit(task_goal, sub_agents, available_skills, "unknown_action")
+                    return self._fallback_plan_or_recruit(
+                        task_goal,
+                        sub_agents,
+                        available_skills,
+                        "unknown_action",
+                        allow_recruit=False,
+                    )
 
             if action == "plan":
                 steps = _coerce_steps(result)
@@ -170,7 +208,13 @@ class StudioLeaderExecutor:
                         f"studio={studio_id}, employees={len(sub_agents)}, raw={str(response_str)[:500]}"
                     )
                     _log_plan_audit(task_id, studio_id, result, sub_agents, response_str, "empty_plan")
-                    return self._fallback_plan_or_recruit(task_goal, sub_agents, available_skills, "empty_plan")
+                    return self._fallback_plan_or_recruit(
+                        task_goal,
+                        sub_agents,
+                        available_skills,
+                        "empty_plan",
+                        allow_recruit=False,
+                    )
                 result["steps"] = steps
 
             _log_plan_audit(task_id, studio_id, result, sub_agents, response_str)
@@ -196,16 +240,8 @@ class StudioLeaderExecutor:
         sub_agents: list,
         available_skills: list[dict],
         reason: str,
-        allow_recruit: bool = True,
+        allow_recruit: bool = False,
     ) -> Dict[str, Any]:
-        if allow_recruit and len(sub_agents) < 2:
-            return {
-                "action": "recruit_employee",
-                "employee_role": _fallback_employee_role(task_goal),
-                "required_skills": _fallback_skill_slugs(available_skills),
-                "message": f"Fallback recruit because leader returned no usable plan: {reason}",
-            }
-
         assignee = _choose_fallback_assignee(sub_agents)
         return {
             "action": "plan",
@@ -310,34 +346,6 @@ def _localized_leader_parse_error(source_text: str) -> str:
     if is_chinese(source_text):
         return "Leader 规划结果无法解析为 JSON。请补充说明你的需求，或稍后重试。"
     return "The Leader planning response could not be parsed as JSON. Please clarify your request or try again later."
-
-
-def _fallback_employee_role(source_text: str) -> str:
-    text = source_text.lower()
-    if any(token in text for token in ("源码", "代码", "code", "repository", "repo")):
-        return "Codebase Researcher" if not is_chinese(source_text) else "代码库研究员"
-    if any(token in text for token in ("搜索", "调研", "research", "search")):
-        return "Research Specialist" if not is_chinese(source_text) else "信息研究员"
-    if any(token in text for token in ("excel", "csv", "data", "数据")):
-        return "Data Analyst" if not is_chinese(source_text) else "数据分析师"
-    return "Execution Specialist" if not is_chinese(source_text) else "任务执行专员"
-
-
-def _fallback_skill_slugs(available_skills: list[dict]) -> list[str]:
-    available = {str(item.get("slug") or "") for item in available_skills}
-    preferred = [
-        "list_files",
-        "read_file",
-        "write_file",
-        "execute_code",
-        "web_search",
-        "browser_search",
-        "use_skill",
-    ]
-    selected = [slug for slug in preferred if slug in available]
-    if selected:
-        return selected[:5]
-    return [slug for slug in available if slug][:3]
 
 
 def _choose_fallback_assignee(sub_agents: list) -> str:

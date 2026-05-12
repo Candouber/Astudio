@@ -1,16 +1,15 @@
 """Agent Zero, the CEO-level router and final synthesizer."""
 import json
 import re
-from difflib import SequenceMatcher
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from loguru import logger
 
 from agents.context import ContextBuilder
 from services.llm_service import llm_service
-from storage.studio_store import StudioStore
+from storage.studio_store import DEFAULT_TEAM_ID, StudioStore
 from storage.task_store import TaskStore
-from utils.language import is_chinese, response_language_instruction
+from utils.language import response_language_instruction
 
 
 class AgentZero:
@@ -20,18 +19,19 @@ class AgentZero:
 
     async def route_task(self, question: str) -> Dict[str, Any]:
         """
-        对用户问题进行场景匹配，路由到已有的工作室、分配给0号自己，或决定创建新工作室。
+        对用户问题进行团队匹配，路由到已有团队或分配给 0 号直接处理。
         返回必须是包含 "action" 的特定 JSON 对象。
         返回值额外带上 studio_scenario（若已能确定）方便上层无需再次查 DB。
         """
-        logger.info(f"[route_task] start, question={question[:60]}")
-        if await self._is_system_management_task(question):
+        routing_intent = self._extract_routing_intent(question)
+        logger.info(f"[route_task] start, question={routing_intent[:60]}")
+        if await self._is_system_management_task(routing_intent):
             logger.info("[route_task] -> system_management (studio_0)")
             return {
                 "action": "route",
                 "studio_id": "studio_0",
-                "studio_scenario": "Studio 0 (System Management)",
-                "brief": f"Handle this platform-level change in Studio 0 System Management: {question}",
+                "studio_scenario": "系统管理团队",
+                "brief": f"Handle this platform-level change in the internal system team: {routing_intent}",
             }
 
         cards = await self.studio_store.get_all_cards()
@@ -44,13 +44,13 @@ class AgentZero:
 
         system_prompt = ContextBuilder.build_agent_zero(
             studio_cards_json=cards_json,
-            language_instruction=response_language_instruction(question),
+            language_instruction=response_language_instruction(routing_intent),
         )
 
         response_str = await llm_service.chat(
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": question}
+                {"role": "user", "content": routing_intent}
             ],
             role="agent_zero",
             stream=False,
@@ -68,62 +68,57 @@ class AgentZero:
 
             # 安全检查
             action = result.get("action")
-            if action not in ["route", "solve", "create_studio"]:
+            if action not in ["route", "solve"]:
                 logger.warning(f"0号输出未知action: {action}，回退为业务路由")
-                return self._fallback_business_route(question, business_cards, "unknown_action")
+                return self._fallback_business_route(routing_intent, business_cards, "unknown_action")
 
             if action == "route":
                 studio_id = result.get("studio_id")
                 valid_business_ids = {card.get("id") for card in business_cards}
                 if studio_id == "studio_0":
                     logger.warning("非系统任务被模型路由到 studio_0，已拦截并改走业务路由")
-                    return self._fallback_business_route(question, business_cards, "blocked_studio_0")
+                    return self._fallback_business_route(routing_intent, business_cards, "blocked_studio_0")
                 if studio_id not in valid_business_ids:
                     logger.warning(f"模型路由到不存在或不可用工作室: {studio_id}，已改走业务路由")
-                    return self._fallback_business_route(question, business_cards, "invalid_studio")
+                    return self._fallback_business_route(routing_intent, business_cards, "invalid_studio")
                 # 把该工作室的 scenario 直接回填给上层
                 result.setdefault("studio_scenario", id_to_scenario.get(str(studio_id), ""))
 
-            if action == "solve" and not self._can_answer_directly(question):
+            if action == "solve" and not self._can_answer_directly(routing_intent):
                 logger.warning("模型试图直接回答复杂业务任务，已改走业务路由")
-                return self._fallback_business_route(question, business_cards, "blocked_solve")
-
-            if action == "create_studio":
-                reusable = self._find_reusable_studio_by_category(result, business_cards, question)
-                if reusable:
-                    logger.info(
-                        f"0号拟创建同类工作室 [{result.get('studio_name')}]，"
-                        f"已复用 [{reusable.get('scenario')}] ({reusable.get('id')})"
-                    )
-                    return {
-                        "action": "route",
-                        "studio_id": reusable["id"],
-                        "studio_scenario": str(reusable.get("scenario") or ""),
-                        "brief": f"Reuse existing studio '{reusable.get('scenario', 'Existing Studio')}' to handle: {question}",
-                    }
+                return self._fallback_business_route(routing_intent, business_cards, "blocked_solve")
 
             logger.info(f"[route_task] done, action={action}, studio={result.get('studio_id')}")
             return result
         except json.JSONDecodeError as e:
             logger.error(f"Routing failed to parse JSON: {e}\nResponse: {response_str}")
-            return self._fallback_business_route(question, business_cards, "json_parse_error")
+            return self._fallback_business_route(routing_intent, business_cards, "json_parse_error")
 
     @staticmethod
-    def _normalize_category(value: Optional[str]) -> str:
-        if not value:
-            return ""
-        return re.sub(r"[\s\-_/｜|:：,，;；。.!！?？]+", "", value).strip().lower()
-
-    def _category_matches(self, new_category: str, existing_category: str) -> bool:
-        new_norm = self._normalize_category(new_category)
-        existing_norm = self._normalize_category(existing_category)
-        if not new_norm or not existing_norm:
-            return False
-        if new_norm == existing_norm:
-            return True
-        if new_norm in existing_norm or existing_norm in new_norm:
-            return True
-        return SequenceMatcher(None, new_norm, existing_norm).ratio() >= 0.78
+    def _extract_routing_intent(question: str) -> str:
+        """Generated iteration prompts include guardrails mentioning AStudio/system/sandbox.
+        Route by the user's actual request section so those guardrails do not trigger system routing.
+        """
+        text = question or ""
+        markers = (
+            "## User Iteration Request",
+            "## New User Request",
+            "## Original Request from User / CEO",
+            "## User Request",
+        )
+        for marker in markers:
+            idx = text.find(marker)
+            if idx == -1:
+                continue
+            section = text[idx + len(marker):]
+            section = section.lstrip(" \t\r\n:：")
+            next_header = section.find("\n## ")
+            if next_header != -1:
+                section = section[:next_header]
+            section = section.strip()
+            if section:
+                return section
+        return text.strip()
 
     @staticmethod
     def _score_card_for_question(card: dict, question: str) -> float:
@@ -145,25 +140,6 @@ class AgentZero:
         score += min(float(card.get("task_count") or 0), 10.0) * 0.05
         return score
 
-    def _find_reusable_studio_by_category(self, result: dict, cards: list[dict], question: str) -> Optional[dict]:
-        """当 0 号想创建新工作室时，用类别做一层硬兜底，避免同类工作室膨胀。"""
-        new_category = str(result.get("category") or "").strip()
-        generic_categories = {
-            "通用", "综合", "其他", "一般", "默认", "未分类",
-            "general", "misc", "other", "default", "uncategorized",
-        }
-        if self._normalize_category(new_category) in {self._normalize_category(c) for c in generic_categories}:
-            return None
-
-        candidates = [
-            card for card in cards
-            if card.get("id") != "studio_0"
-            and self._category_matches(new_category, str(card.get("category") or ""))
-        ]
-        if not candidates:
-            return None
-        return max(candidates, key=lambda card: self._score_card_for_question(card, question))
-
     def _fallback_business_route(self, question: str, cards: list[dict], reason: str) -> Dict[str, Any]:
         """非系统任务禁止落到 0 号，模型输出异常时用保守业务路由兜底。"""
         scored = [
@@ -183,52 +159,12 @@ class AgentZero:
                     ),
                 }
 
-        return self._build_business_studio_create(question)
-
-    @staticmethod
-    def _build_business_studio_create(question: str) -> Dict[str, Any]:
-        text = question.lower()
-        chinese = is_chinese(question)
-        if re.search(r"(代码|开发|程序|前端|后端|api|bug|软件|app|网站|网页|python|java|go|typescript|react)", text):
-            return {
-                "action": "create_studio",
-                "studio_name": "软件开发工作室" if chinese else "Software Development Studio",
-                "leader_role": "技术负责人" if chinese else "Technical Lead",
-                "category": "软件开发" if chinese else "Software Development",
-            }
-        if re.search(r"(数据|分析|算法|poi|aoi|路网|卫星|影像|gis|地图|地理|模型|评估|测评)", text):
-            return {
-                "action": "create_studio",
-                "studio_name": "数据分析与方案工作室" if chinese else "Data Analysis and Solution Studio",
-                "leader_role": "数据方案负责人" if chinese else "Data Solutions Lead",
-                "category": "数据分析与算法方案" if chinese else "Data Analysis and Algorithmic Solutions",
-            }
-        if re.search(r"(旅行|旅游|行程|酒店|机票|包车|攻略)", text):
-            return {
-                "action": "create_studio",
-                "studio_name": "旅行规划工作室" if chinese else "Travel Planning Studio",
-                "leader_role": "旅行规划负责人" if chinese else "Travel Planning Lead",
-                "category": "旅行规划" if chinese else "Travel Planning",
-            }
-        if re.search(r"(面试|求职|简历|jd|岗位|职业)", text):
-            return {
-                "action": "create_studio",
-                "studio_name": "职业发展工作室" if chinese else "Career Development Studio",
-                "leader_role": "职业辅导负责人" if chinese else "Career Coaching Lead",
-                "category": "职业发展" if chinese else "Career Development",
-            }
-        if re.search(r"(文案|文章|报告|内容|写作|脚本)", text):
-            return {
-                "action": "create_studio",
-                "studio_name": "内容创作工作室" if chinese else "Content Creation Studio",
-                "leader_role": "内容策略负责人" if chinese else "Content Strategy Lead",
-                "category": "内容创作" if chinese else "Content Creation",
-            }
+        default = next((card for card in cards if card.get("id") == DEFAULT_TEAM_ID), None)
         return {
-            "action": "create_studio",
-            "studio_name": "通用方案工作室" if chinese else "General Solutions Studio",
-            "leader_role": "任务规划负责人" if chinese else "Task Planning Lead",
-            "category": "通用业务规划" if chinese else "General Business Planning",
+            "action": "route",
+            "studio_id": (default or {}).get("id") or DEFAULT_TEAM_ID,
+            "studio_scenario": str((default or {}).get("scenario") or "默认团队"),
+            "brief": f"Fallback corrected the model route ({reason}); use the default team to handle: {question}",
         }
 
     @staticmethod
@@ -298,7 +234,7 @@ class AgentZero:
     @staticmethod
     def _is_high_confidence_system_management_task(question: str) -> bool:
         """只处理极明确的平台级请求，避免把业务任务里的泛词误判成系统管理。"""
-        text = question.lower()
+        text = AgentZero._extract_routing_intent(question).lower()
 
         schedule_pattern = (
             r"(每天|每日|每周|每月|每年|每小时|每隔|定时任务|定时|定期|提醒我|到点|"

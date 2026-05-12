@@ -201,6 +201,9 @@ async def init_database():
                 task_count INTEGER DEFAULT 0,
                 is_working BOOLEAN DEFAULT FALSE,
                 total_tokens INTEGER DEFAULT 0,
+                kind TEXT DEFAULT 'team',
+                is_default BOOLEAN DEFAULT FALSE,
+                is_hidden BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_active TIMESTAMP
@@ -341,6 +344,27 @@ async def init_database():
             )
         """)
 
+        # 任务执行耗时事件：用于分析每个 step 慢在依赖等待、模型、工具还是复核。
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS task_step_events (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                sub_task_id TEXT,
+                node_id TEXT,
+                step_id TEXT,
+                event_type TEXT NOT NULL,
+                label TEXT DEFAULT '',
+                status TEXT DEFAULT 'ok',
+                started_at TIMESTAMP NOT NULL,
+                ended_at TIMESTAMP,
+                duration_ms INTEGER DEFAULT 0,
+                metadata_json TEXT DEFAULT '{}',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+                FOREIGN KEY (sub_task_id) REFERENCES sub_tasks(id) ON DELETE CASCADE
+            )
+        """)
+
         # 为已存在的 DB 做向前兼容迁移（新增列）
         # 对所有表做向前兼容迁移：涵盖 CREATE TABLE 里的全部非主键列
         # try/except 确保"列已存在"时静默跳过，安全幂等
@@ -389,6 +413,9 @@ async def init_database():
                 ("updated_at",       "TIMESTAMP"),
                 ("last_active",      "TIMESTAMP"),
                 ("total_tokens",     "INTEGER DEFAULT 0"),
+                ("kind",             "TEXT DEFAULT 'team'"),
+                ("is_default",       "BOOLEAN DEFAULT FALSE"),
+                ("is_hidden",        "BOOLEAN DEFAULT FALSE"),
             ],
             "tasks": [
                 ("current_iteration_id",      "TEXT"),
@@ -677,6 +704,9 @@ async def init_database():
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_sandboxes_owner ON sandboxes(owner_type, owner_id)",
             "CREATE INDEX IF NOT EXISTS idx_sandboxes_task_id ON sandboxes(task_id)",
             "CREATE INDEX IF NOT EXISTS idx_sandbox_runs_sandbox_id ON sandbox_runs(sandbox_id)",
+            "CREATE INDEX IF NOT EXISTS idx_task_step_events_task_id ON task_step_events(task_id)",
+            "CREATE INDEX IF NOT EXISTS idx_task_step_events_sub_task_id ON task_step_events(sub_task_id)",
+            "CREATE INDEX IF NOT EXISTS idx_task_step_events_type ON task_step_events(event_type)",
         ]:
             try:
                 await db.execute(ddl)
@@ -719,14 +749,82 @@ async def init_database():
             SET iteration_id = COALESCE(iteration_id, 'it_' || task_id || '_0')
         """)
 
-        # ── Studio 0 默认工作室（Agent Zero 直答） ────────────────────────────
+        # ── 内部系统团队（Agent Zero / 平台管理），不作为用户默认业务团队 ───────
         await db.execute("""
             INSERT OR IGNORE INTO studios (id, scenario, description, core_capabilities)
             VALUES (
                 'studio_0',
-                'Agent Zero 直答',
-                '由 0 号 Agent 直接处理的简单问题与快速解答',
-                '["快速问答","知识检索","简单计算","信息总结"]'
+                '系统管理团队',
+                '由 0 号 Agent 处理平台配置、调度、Skill 管理等系统级任务',
+                '["系统管理","平台配置","Skill 管理","定时任务"]'
+            )
+        """)
+        await db.execute("""
+            UPDATE studios
+            SET kind = 'system', is_default = 0, is_hidden = 1,
+                scenario = COALESCE(NULLIF(scenario, ''), '系统管理团队')
+            WHERE id = 'studio_0'
+        """)
+
+        # ── 默认业务团队：常规任务默认进入这里。用户创建多个团队后才需要路由 ─────
+        await db.execute("""
+            INSERT OR IGNORE INTO studios
+                (id, scenario, description, core_capabilities, kind, is_default, is_hidden)
+            VALUES (
+                'default_team',
+                '默认团队',
+                '默认业务团队，承接普通任务规划、执行与结果沉淀',
+                '["研究分析","工程实现","文档整理","质量审阅"]',
+                'team',
+                1,
+                0
+            )
+        """)
+        await db.execute("""
+            UPDATE studios
+            SET kind = COALESCE(NULLIF(kind, ''), 'team'),
+                is_hidden = COALESCE(is_hidden, 0)
+            WHERE id != 'studio_0'
+        """)
+        await db.execute("""
+            UPDATE studios
+            SET is_default = CASE WHEN id = 'default_team' THEN 1 ELSE COALESCE(is_default, 0) END
+            WHERE kind = 'team'
+        """)
+        await db.execute("""
+            INSERT OR IGNORE INTO sub_agent_configs (id, studio_id, role, skills)
+            VALUES (
+                'default_researcher',
+                'default_team',
+                '研究员',
+                '["web_search","browser_search","file_analysis","read_uploaded_file","read_pdf_text","read_excel_sheet"]'
+            )
+        """)
+        await db.execute("""
+            INSERT OR IGNORE INTO sub_agent_configs (id, studio_id, role, skills)
+            VALUES (
+                'default_engineer',
+                'default_team',
+                '工程师',
+                '["execute_code","read_file","write_file","list_files","sandbox_run_command","sandbox_read_file","sandbox_write_file","sandbox_list_files","sandbox_start_preview"]'
+            )
+        """)
+        await db.execute("""
+            INSERT OR IGNORE INTO sub_agent_configs (id, studio_id, role, skills)
+            VALUES (
+                'default_writer',
+                'default_team',
+                '文档整理员',
+                '["read_file","write_file","file_analysis","read_uploaded_file"]'
+            )
+        """)
+        await db.execute("""
+            INSERT OR IGNORE INTO sub_agent_configs (id, studio_id, role, skills)
+            VALUES (
+                'default_reviewer',
+                'default_team',
+                '审阅员',
+                '["read_file","file_analysis","list_files"]'
             )
         """)
         await db.execute("""
@@ -734,7 +832,7 @@ async def init_database():
             VALUES (
                 'agent_zero_sa',
                 'studio_0',
-                'Agent Zero',
+                '系统管理员',
                 '["knowledge_qa","summarization","reasoning"]'
             )
         """)
@@ -758,6 +856,36 @@ async def init_database():
                 '["skill_creator","find_skill","use_skill","web_search","write_file","execute_code"]'
             )
         """)
+
+        def _ensure_agent_files(studio_id: str, member_id: str, role: str, agent_md: str) -> tuple[str, str]:
+            member_dir = STUDIOS_DIR / studio_id / "sub_agents" / member_id
+            member_dir.mkdir(parents=True, exist_ok=True)
+            agent_path = member_dir / "agent.md"
+            soul_path = member_dir / "soul.md"
+            if not agent_path.exists():
+                agent_path.write_text(agent_md, encoding="utf-8")
+            if not soul_path.exists():
+                soul_path.write_text("# 记忆\n\n暂无。\n", encoding="utf-8")
+            return str(agent_path), str(soul_path)
+
+        for member_id, studio_id, role, agent_md in [
+            ("default_researcher", "default_team", "研究员", "# 研究员\n\n负责信息检索、资料阅读、附件分析和事实核验。"),
+            ("default_engineer", "default_team", "工程师", "# 工程师\n\n负责代码实现、文件操作、沙箱执行、页面预览和技术验证。"),
+            ("default_writer", "default_team", "文档整理员", "# 文档整理员\n\n负责把过程材料整理成结构化文档、报告、说明和交付笔记。"),
+            ("default_reviewer", "default_team", "审阅员", "# 审阅员\n\n负责检查结果完整性、风险、遗漏、格式和可执行性。"),
+            ("agent_zero_sa", "studio_0", "系统管理员", "# 系统管理员\n\n负责平台配置、系统级调度、模型配置、定时任务和内部管理。"),
+            ("hr_agent_sa", "studio_0", "HR 招聘专员", "# HR 招聘专员\n\n保留为历史兼容角色。当前不会自动创建员工。"),
+            ("skill_engineer_sa", "studio_0", "Skill 工程师", "# Skill 工程师\n\n负责查找、创建、整理和导入 Skill。"),
+        ]:
+            agent_path, soul_path = _ensure_agent_files(studio_id, member_id, role, agent_md)
+            await db.execute(
+                """UPDATE sub_agent_configs
+                   SET agent_md_path = COALESCE(NULLIF(agent_md_path, ''), ?),
+                       soul_path = COALESCE(NULLIF(soul_path, ''), ?)
+                   WHERE id = ?""",
+                (agent_path, soul_path, member_id),
+            )
+
         cursor = await db.execute(
             "SELECT skills FROM sub_agent_configs WHERE id = 'agent_zero_sa'"
         )

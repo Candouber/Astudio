@@ -12,14 +12,29 @@ from agents.context import ContextBuilder
 from agents.studio_leader_executor import studio_leader
 from i18n.status_message_codec import encode_task_status_msg as enc
 from services.llm_service import llm_service
+from storage.config_store import ConfigStore
 from storage.sandbox_store import SandboxStore
 from storage.studio_store import StudioStore
 from storage.task_store import TaskStore
 from utils.language import is_chinese
 
 WATCHDOG_INTERVAL_SECONDS = 15
-PLANNING_STALE_SECONDS = 180
-EXECUTING_STALE_SECONDS = 240
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+        return value if value > 0 else default
+    except ValueError:
+        logger.warning(f"Invalid {name}={raw!r}; using default {default}")
+        return default
+
+
+PLANNING_STALE_SECONDS = _env_int("ASTUDIO_PLANNING_STALE_SECONDS", 900)
+EXECUTING_STALE_SECONDS = _env_int("ASTUDIO_EXECUTING_STALE_SECONDS", 1200)
 SOUL_COMPRESS_THRESHOLD = 2000  # soul 文件超过此字符数时触发压缩
 SOUL_MAX_CHARS = 1500           # 压缩后目标字符数
 SUMMARY_MIN_CHARS = 120
@@ -33,6 +48,7 @@ class TaskMonitor:
         self.task_store = TaskStore()
         self.studio_store = StudioStore()
         self.sandbox_store = SandboxStore()
+        self.config_store = ConfigStore()
         # 保证 finalize / consolidate 对同一个 task 只跑一次
         self._finalizing: set = set()
         self._consolidated: set = set()
@@ -80,6 +96,7 @@ class TaskMonitor:
           2. 若长时间无活动，自动落到用户可感知、可恢复的状态
         """
         from storage.database import get_db
+        planning_stale_seconds, executing_stale_seconds = await self._load_stale_limits()
         db = await get_db()
         try:
             cursor = await db.execute(
@@ -113,13 +130,27 @@ class TaskMonitor:
                 )
                 inactive_seconds = (datetime.now() - last_activity).total_seconds()
                 stale_limit = (
-                    EXECUTING_STALE_SECONDS if task.status == "executing"
-                    else PLANNING_STALE_SECONDS
+                    executing_stale_seconds if task.status == "executing"
+                    else planning_stale_seconds
                 )
                 if inactive_seconds >= stale_limit:
                     await self._mark_task_stale(task, int(inactive_seconds))
         finally:
             await db.close()
+
+    async def _load_stale_limits(self) -> tuple[int, int]:
+        try:
+            advanced = (await self.config_store.load()).advanced
+            planning = int(getattr(advanced, "planning_stale_seconds", PLANNING_STALE_SECONDS) or PLANNING_STALE_SECONDS)
+            executing = int(getattr(advanced, "executing_stale_seconds", EXECUTING_STALE_SECONDS) or EXECUTING_STALE_SECONDS)
+        except Exception as e:
+            logger.warning(f"Failed to load watchdog stale limits from config; using defaults: {e}")
+            planning = PLANNING_STALE_SECONDS
+            executing = EXECUTING_STALE_SECONDS
+
+        planning = _env_int("ASTUDIO_PLANNING_STALE_SECONDS", planning)
+        executing = _env_int("ASTUDIO_EXECUTING_STALE_SECONDS", executing)
+        return planning, executing
 
     async def _mark_task_stale(self, task, inactive_seconds: int):
         chinese = is_chinese(getattr(task, "question", "") or "")

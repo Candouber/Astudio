@@ -37,6 +37,8 @@ Complete the Leader's instruction above, then report the result through a tool:
 - The first-priority actions are usually:
   - `ensure_sandbox`
   - then use `sandbox_list_files` / `sandbox_read_file` / `sandbox_write_file` / `sandbox_run_command` / `sandbox_start_preview` as needed
+- `ensure_sandbox` returns `canonical_output_dir` for the current task iteration. Put final deliverables for this run there by default.
+- If this run iterates on an earlier result, copy the previous usable artifact into `canonical_output_dir` first, then modify the copied files. The current run's output directory must be a complete snapshot, not just a partial patch.
 - If the Leader or user instruction references an absolute local path outside the sandbox, do not read or analyze it in place. First call `sandbox_import_path` to copy that file or directory into the sandbox, then use the returned sandbox-relative path for all subsequent reads, commands, summaries, and handoff notes.
 - Do not assume files really exist. Check in the sandbox first, then run, then verify the output.
 
@@ -56,7 +58,7 @@ Complete the Leader's instruction above, then report the result through a tool:
 ### Tool / App Delivery Convention (Important)
 
 - If the deliverable is essentially a user-operable tool / app / analyzer / exercise page / previewer, try not to deliver only a backend script.
-- When feasible, also provide a lightweight frontend or preview layer, such as `index.html` / `public/index.html`, so the user can directly view results, upload samples, adjust parameters, or experience the flow.
+- When feasible, also provide a lightweight frontend or preview layer, preferably under the current `canonical_output_dir` such as `output/<iteration_id>/index.html`, so the user can directly view results, upload samples, adjust parameters, or experience the flow.
 - If only a script can be delivered and no frontend is feasible, clearly explain why in the deliverable and what the next step would be to add a frontend.
 
 - If you **complete successfully**, call `submit_task_deliverable` and put the detailed result in the `deliverable` argument.

@@ -59,6 +59,7 @@
 .s-card__top {
   display: flex;
   gap: 12px;
+  align-items: flex-start;
 }
 
 .s-card__icon {
@@ -76,6 +77,57 @@
 .s-card__title {
   font-size: 1rem;
   font-weight: 600;
+}
+
+.s-card__copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.s-card__delete {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.s-card__delete:not(:disabled):hover {
+  color: var(--accent-danger);
+  background: var(--accent-danger-light);
+}
+
+.s-card__delete:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.s-card__confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--accent-danger-light);
+  border-radius: var(--radius-md);
+  background: var(--accent-danger-light);
+  color: var(--accent-danger);
+  font-size: 0.8rem;
+}
+
+.s-card__confirm-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.studios-page .btn-danger {
+  background: var(--accent-danger);
+  color: #fff;
+  border: 1px solid var(--accent-danger);
+}
+
+.studios-page .btn-danger:hover:not(:disabled) {
+  background: #b91c1c;
+  border-color: #b91c1c;
 }
 
 .s-card__desc {

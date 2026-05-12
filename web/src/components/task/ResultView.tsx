@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import type { PathNode, PathEdge, TaskStatus, Annotation, SubTask, Sandbox, SandboxFile, TaskIteration } from '../../types'
+import type { PathNode, PathEdge, TaskStatus, Annotation, SubTask, Sandbox, SandboxFile, TaskIteration, TaskStepEvent } from '../../types'
 import { api } from '../../api/client'
 import { connectTaskStream } from '../../api/sse'
 import { useTaskStore } from '../../stores/taskStore'
@@ -100,6 +100,10 @@ function outputNodeId(path: string) {
   return `${OUTPUT_NODE_PREFIX}${path}`
 }
 
+function outputDirectoryForIteration(iterationId?: string | null) {
+  return iterationId ? `output/${iterationId}` : 'output'
+}
+
 function isMarkdownFile(path: string) {
   return /\.(md|markdown|txt)$/i.test(path)
 }
@@ -174,6 +178,94 @@ function fmtCostCNY(usd: number): string {
   if (cny < 0.01) return '¥<0.01'
   if (cny < 1) return `¥${cny.toFixed(2)}`
   return `¥${cny.toFixed(cny < 10 ? 2 : 1)}`
+}
+
+function sumEventDuration(events: TaskStepEvent[], eventType: string) {
+  return events
+    .filter(event => event.event_type === eventType)
+    .reduce((sum, event) => sum + (event.duration_ms || 0), 0)
+}
+
+function eventTitle(event: TaskStepEvent) {
+  const meta = event.metadata || {}
+  const reactStep = typeof meta.react_step === 'number' || typeof meta.react_step === 'string'
+    ? String(meta.react_step)
+    : ''
+  if (event.event_type === 'llm_call') {
+    return `${event.label || 'LLM'}${reactStep ? ` · step ${reactStep}` : ''}`
+  }
+  if (event.event_type === 'tool_call') return `工具 · ${event.label}`
+  if (event.event_type === 'dependency_wait') return '依赖等待'
+  if (event.event_type === 'review') return 'Leader 复核'
+  return event.label || event.event_type
+}
+
+function TimingAnalysisPanel({
+  subTasks,
+  events,
+}: {
+  subTasks: SubTask[]
+  events: TaskStepEvent[]
+}) {
+  if (events.length === 0 || subTasks.length === 0) return null
+
+  const rows = subTasks.map(subTask => {
+    const related = events.filter(event =>
+      event.sub_task_id === subTask.id
+      || (event.step_id && event.step_id === subTask.step_id)
+      || (event.node_id && event.node_id === subTask.group_id)
+    )
+    const failedCount = related.filter(event => event.status === 'failed' || event.status === 'blocked').length
+    const biggest = [...related].sort((a, b) => (b.duration_ms || 0) - (a.duration_ms || 0))[0]
+    const eventTotal = related.reduce((sum, event) => sum + (event.duration_ms || 0), 0)
+    const visibleTotal = subTask.duration_ms || eventTotal
+    return {
+      subTask,
+      related,
+      visibleTotal,
+      waitMs: sumEventDuration(related, 'dependency_wait'),
+      llmMs: sumEventDuration(related, 'llm_call'),
+      toolMs: sumEventDuration(related, 'tool_call'),
+      reviewMs: sumEventDuration(related, 'review'),
+      failedCount,
+      biggest,
+    }
+  }).filter(row => row.related.length > 0 || row.visibleTotal > 0)
+
+  if (rows.length === 0) return null
+
+  return (
+    <section className="timing-panel">
+      <div className="timing-panel__head">
+        <h3><Clock size={15} /> 耗时分析</h3>
+        <span>{events.length} 个事件</span>
+      </div>
+      <div className="timing-panel__list">
+        {rows.map(row => (
+          <div key={row.subTask.id} className="timing-row">
+            <div className="timing-row__main">
+              <strong>{row.subTask.step_label}</strong>
+              <span>{row.subTask.assign_to_role} · {row.subTask.status}</span>
+            </div>
+            <div className="timing-row__chips">
+              <span title="该 step 当前记录的总耗时"><Clock size={12} /> {fmtDuration(row.visibleTotal)}</span>
+              <span>模型 {fmtDuration(row.llmMs)}</span>
+              <span>工具 {fmtDuration(row.toolMs)}</span>
+              <span>等待 {fmtDuration(row.waitMs)}</span>
+              <span>复核 {fmtDuration(row.reviewMs)}</span>
+              {row.failedCount > 0 && <span className="timing-row__chip--warn">失败 {row.failedCount}</span>}
+            </div>
+            {row.biggest && (
+              <div className="timing-row__largest">
+                最大单段：{eventTitle(row.biggest)} · {fmtDuration(row.biggest.duration_ms)}
+                {row.biggest.status !== 'ok' ? ` · ${row.biggest.status}` : ''}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  )
 }
 
 function summarizeText(content: string | undefined, limit: number, emptyLabel: string) {
@@ -488,6 +580,7 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
   const [selectedPanelAnnotationId, setSelectedPanelAnnotationId] = useState<string | null>(null)
   const [pendingProcess, setPendingProcess] = useState<SelectionPayload | null>(null)
   const [annotations, setAnnotations] = useState<Annotation[]>([])
+  const [stepEvents, setStepEvents] = useState<TaskStepEvent[]>([])
   const [notebookOpen, setNotebookOpen] = useState(true)
   const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null)
   const [fullStepOutputIds, setFullStepOutputIds] = useState<Set<string>>(() => new Set())
@@ -520,6 +613,28 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
   }, [loadAnnotations])
 
   useEffect(() => {
+    if (!annotations.some(annotation => !annotation.answer)) return
+    const timer = window.setInterval(loadAnnotations, 3000)
+    return () => window.clearInterval(timer)
+  }, [annotations, loadAnnotations])
+
+  const loadStepEvents = useCallback(async () => {
+    try {
+      const list = await api.listTaskStepEvents(taskId)
+      setStepEvents(list)
+    } catch {
+      /* ignore */
+    }
+  }, [taskId])
+
+  useEffect(() => {
+    loadStepEvents()
+    if (status !== 'planning' && status !== 'executing') return
+    const timer = window.setInterval(loadStepEvents, 10000)
+    return () => window.clearInterval(timer)
+  }, [loadStepEvents, status])
+
+  useEffect(() => {
     let cancelled = false
     ;(async () => {
       try {
@@ -537,10 +652,23 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
           )
           return directFiles.concat(...nestedFiles)
         }
-        const files = await collectOutputFiles('output', 0)
+        const activeOutputDir = activeResultIterationId && activeResultIterationId !== '__legacy__'
+          ? outputDirectoryForIteration(activeResultIterationId)
+          : 'output'
+        let usedOutputFallback = false
+        let files = await collectOutputFiles(activeOutputDir, 0)
+        if (files.length === 0 && activeOutputDir !== 'output') {
+          usedOutputFallback = true
+          files = await collectOutputFiles('output', 0)
+        }
         if (cancelled) return
         const nextFiles = files
           .filter(file => file.kind === 'file')
+          .filter(file => {
+            if (activeOutputDir === 'output') return true
+            if (usedOutputFallback) return !/^output\/[^/]+\/.+/.test(file.path)
+            return file.path === activeOutputDir || file.path.startsWith(`${activeOutputDir}/`)
+          })
           .sort((a, b) => {
             const aReadable = isReadableOutput(a.path) ? 0 : 1
             const bReadable = isReadableOutput(b.path) ? 0 : 1
@@ -562,7 +690,7 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
     return () => {
       cancelled = true
     }
-  }, [taskId])
+  }, [activeResultIterationId, taskId])
 
   useEffect(() => {
     let cancelled = false
@@ -874,6 +1002,8 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
                 </span>
               </div>
             )}
+
+            <TimingAnalysisPanel subTasks={subTasks} events={stepEvents} />
           </div>
 
           {(isFailed || isTerminated) && statusMessage && (

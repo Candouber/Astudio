@@ -59,7 +59,7 @@ const en: TranslationTree = {
       'No connected providers yet — finish API setup first to run saved routes.',
     roleAgentZeroTitle: 'Agent Zero',
     roleAgentZeroSubtitle: 'Orchestration',
-    roleAgentZeroHint: 'Understands goals, picks studios, breaks down work — prefer stronger reasoning.',
+    roleAgentZeroHint: 'Understands goals and picks a team when multiple teams exist — prefer stronger reasoning.',
     roleSubAgentsTitle: 'Worker agents',
     roleSubAgentsSubtitle: 'Execution',
     roleSubAgentsHint: 'Retrieval, tools, outputs — prefer fast, cost-effective models.',
@@ -83,13 +83,19 @@ const en: TranslationTree = {
     tabRouting: 'Role routing',
     tabAdvanced: 'Advanced',
     advancedIntro:
-      'Tune worker-agent loop and search budgets. Higher values give complex tasks more room, but can increase latency and cost.',
+      'Tune worker-agent loop, search budgets, and watchdog stale timeouts. Higher values give complex tasks more room, but can increase latency and cost.',
     maxReactSteps: 'Worker max steps',
     maxReactStepsHelp:
       'Maximum reasoning/tool/finalization turns for one worker sub-task. Default is 30.',
     maxSearchToolCalls: 'Search tool limit',
     maxSearchToolCallsHelp:
       'Maximum web_search / browser_search calls for one worker sub-task. Set to 0 to disable search.',
+    planningStaleSeconds: 'Planning stale timeout',
+    planningStaleSecondsHelp:
+      'How many seconds of no progress before a planning task is marked failed. Default is 900.',
+    executingStaleSeconds: 'Execution stale timeout',
+    executingStaleSecondsHelp:
+      'How many seconds of no progress before an executing task is terminated. Default is 1200.',
     saveConfig: 'Save',
     savingConfig: 'Saving…',
     providerNameLabel: 'Provider name',
