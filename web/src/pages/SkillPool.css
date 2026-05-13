@@ -42,46 +42,6 @@
   font-size: 0.84rem;
 }
 
-.skill-pool-assignment {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-bottom: 16px;
-  padding: 14px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--bg-primary);
-  box-shadow: var(--shadow-sm);
-}
-
-.skill-pool-assignment__title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.9rem;
-}
-
-.skill-pool-assignment__title code {
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  font-size: 0.78rem;
-}
-
-.skill-pool-assignment__controls {
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto auto;
-  gap: 8px;
-  align-items: center;
-}
-
-.skill-pool-assignment p {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 0.8rem;
-}
-
 /* ── 导入 / AI 生成 卡片 ─────────────────────────────────────────── */
 .skill-pool-intake {
   display: grid;
@@ -429,7 +389,6 @@
   .skill-pool-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .skill-pool-intake { grid-template-columns: 1fr; }
   .skill-pool-intake__row { grid-template-columns: 1fr; }
-  .skill-pool-assignment__controls { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 640px) {
@@ -483,6 +442,174 @@
 @keyframes skill-pool-highlight {
   0%, 100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
   20%, 60% { box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.55); }
+}
+
+/* ── Skill 分配确认弹窗 ───────────────────── */
+.skill-pool-assign-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 130;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+}
+
+.skill-pool-assign-modal__mask {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(15, 23, 42, 0.42);
+  backdrop-filter: blur(2px);
+  cursor: pointer;
+}
+
+.skill-pool-assign-modal__mask:disabled {
+  cursor: default;
+}
+
+.skill-pool-assign-modal__panel {
+  position: relative;
+  z-index: 1;
+  width: min(640px, 100%);
+  max-height: min(720px, calc(100vh - 36px));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  box-shadow: 0 22px 70px rgba(15, 23, 42, 0.24);
+  overflow: hidden;
+}
+
+.skill-pool-assign-modal__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px 14px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.skill-pool-assign-modal__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.98rem;
+}
+
+.skill-pool-assign-modal__header p {
+  margin: 6px 0 0;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
+.skill-pool-assign-modal__header code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 0.78rem;
+}
+
+.skill-pool-assign-modal__body {
+  flex: 1;
+  min-height: 180px;
+  overflow: auto;
+  padding: 14px 18px;
+}
+
+.skill-pool-assign-modal__loading,
+.skill-pool-assign-modal__empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 120px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.86rem;
+}
+
+.skill-pool-assign-modal__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.skill-pool-assign-modal__toolbar span {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.skill-pool-assign-modal__list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.skill-pool-assign-modal__team {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.skill-pool-assign-modal__team-name {
+  padding: 8px 10px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.skill-pool-assign-modal__member {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 10px;
+  border-top: 1px solid var(--border-color);
+  cursor: pointer;
+}
+
+.skill-pool-assign-modal__member:hover {
+  background: var(--bg-secondary);
+}
+
+.skill-pool-assign-modal__member input {
+  margin: 0;
+}
+
+.skill-pool-assign-modal__member span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-size: 0.86rem;
+}
+
+.skill-pool-assign-modal__member em {
+  color: var(--accent-success);
+  font-size: 0.74rem;
+  font-style: normal;
+}
+
+.skill-pool-assign-modal__msg {
+  margin: 12px 0 0;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
+.skill-pool-assign-modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-secondary);
 }
 
 /* ── SKILL.md 抽屉 ───────────────────── */

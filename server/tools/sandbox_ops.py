@@ -1,6 +1,7 @@
 """Task sandbox tools bound to the current ToolContext."""
 import asyncio
 import hashlib
+import json
 import re
 import shutil
 import uuid
@@ -47,6 +48,9 @@ SENSITIVE_SOURCE_MARKERS = (
 LOCAL_ABSOLUTE_PATH_PATTERN = re.compile(
     r"(?<![\w:])/(Users|Volumes|private|tmp|var)/[^\s'\"`|;&)]*"
 )
+SHELL_REDIRECT_TARGET_PATTERN = re.compile(
+    r"(?<!<)(?:\d?>{1,2}|&>)\s*(?:(?P<quote>['\"])(?P<quoted>[^'\"]+)(?P=quote)|(?P<bare>[^\s<>|;&]+))"
+)
 
 sandbox_store = SandboxStore()
 
@@ -85,16 +89,39 @@ async def sandbox_list_files(directory: str = ".") -> str:
     return "\n".join(lines)
 
 
-async def sandbox_read_file(path: str) -> str:
+async def sandbox_read_file(path: str = "") -> str:
+    if not isinstance(path, str) or not path.strip():
+        return "[Argument error] sandbox_read_file requires a non-empty sandbox-relative `path`."
     sandbox, _ = await _current_sandbox()
-    return sandbox_store.read_file(sandbox, path, max_chars=MAX_TOOL_READ_CHARS)
+    normalized_path = path.strip()
+    try:
+        return sandbox_store.read_file(sandbox, normalized_path, max_chars=MAX_TOOL_READ_CHARS)
+    except FileNotFoundError:
+        return f"[File not found] {normalized_path}"
+    except IsADirectoryError:
+        return f"[Not a file] {normalized_path}"
+    except PermissionError as e:
+        return f"[Permission error] {e}"
 
 
-async def sandbox_write_file(path: str, content: str) -> str:
+async def sandbox_write_file(path: str = "", content: str = "") -> str:
+    if not isinstance(path, str) or not path.strip():
+        return (
+            "[Argument error] sandbox_write_file requires a non-empty sandbox-relative `path` "
+            "and `content`. Use this tool for file writes instead of shell redirection."
+        )
+    if content is None:
+        content = ""
+    elif not isinstance(content, str):
+        content = json.dumps(content, ensure_ascii=False, indent=2)
     sandbox, _ = await _current_sandbox()
-    target = sandbox_store.write_file(sandbox, path, content)
+    normalized_path = path.strip()
+    target = sandbox_store.write_file(sandbox, normalized_path, content)
     await sandbox_store.touch(sandbox.id)
-    return f"[Write succeeded] {path} ({target.stat().st_size} bytes)"
+    return (
+        f"[Write succeeded] {normalized_path} ({target.stat().st_size} bytes)\n"
+        "Parent directories were created automatically when needed."
+    )
 
 
 async def sandbox_import_path(source_path: str, destination_name: str = "") -> str:
@@ -170,6 +197,7 @@ async def sandbox_run_command(command: str, cwd: str = ".", timeout_seconds: int
     workdir = sandbox_store.safe_path(sandbox, cwd)
     if not workdir.exists() or not workdir.is_dir():
         return f"[Error] Working directory does not exist: {cwd}"
+    _ensure_shell_redirect_parent_dirs(command, Path(sandbox.path), workdir)
 
     runs_dir = Path(sandbox.path) / ".astudio" / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
@@ -290,6 +318,30 @@ def _find_external_local_path(command: str, sandbox_root: Path) -> str:
     return ""
 
 
+def _ensure_shell_redirect_parent_dirs(command: str, sandbox_root: Path, workdir: Path) -> None:
+    """Best-effort compatibility for shell redirection writes like `cat > output/x/index.html`."""
+    root = sandbox_root.resolve()
+    for match in SHELL_REDIRECT_TARGET_PATTERN.finditer(command):
+        raw_path = (match.group("quoted") or match.group("bare") or "").strip()
+        if (
+            not raw_path
+            or raw_path.startswith("&")
+            or raw_path in {"-", "/dev/null"}
+            or "://" in raw_path
+        ):
+            continue
+        try:
+            target = Path(raw_path)
+            if target.is_absolute():
+                resolved = target.resolve()
+            else:
+                resolved = (workdir / target).resolve()
+            resolved.relative_to(root)
+        except Exception:
+            continue
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+
+
 async def _patch_run_log_paths(run_id: str, stdout_path: str, stderr_path: str) -> None:
     from storage.database import get_db
 
@@ -332,11 +384,12 @@ SANDBOX_READ_FILE_SCHEMA = {
     "type": "function",
     "function": {
         "name": "sandbox_read_file",
-        "description": "Read a file in the current task sandbox. The path must be sandbox-relative.",
+        "description": "Read a file in the current task sandbox. The path must be sandbox-relative. Use sandbox_list_files first when unsure about the exact path.",
         "parameters": {
             "type": "object",
             "properties": {"path": {"type": "string", "description": "Relative file path inside the sandbox"}},
             "required": ["path"],
+            "additionalProperties": False,
         },
     },
 }
@@ -345,7 +398,10 @@ SANDBOX_WRITE_FILE_SCHEMA = {
     "type": "function",
     "function": {
         "name": "sandbox_write_file",
-        "description": "Write a file inside the current task sandbox. Use it for scripts, pages, data, and documentation.",
+        "description": (
+            "Write a file inside the current task sandbox. Use it for scripts, pages, data, "
+            "and documentation instead of shell redirection. Parent directories are created automatically."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -353,6 +409,7 @@ SANDBOX_WRITE_FILE_SCHEMA = {
                 "content": {"type": "string", "description": "File content"},
             },
             "required": ["path", "content"],
+            "additionalProperties": False,
         },
     },
 }
@@ -385,7 +442,11 @@ SANDBOX_RUN_COMMAND_SCHEMA = {
     "type": "function",
     "function": {
         "name": "sandbox_run_command",
-        "description": "Run a command inside the current task sandbox and return stdout/stderr. If the task references an external absolute path, import it with sandbox_import_path first and run commands against the imported sandbox-relative copy.",
+        "description": (
+            "Run a command inside the current task sandbox and return stdout/stderr. "
+            "For writing files, prefer sandbox_write_file; command redirection is only for shell-native workflows. "
+            "If the task references an external absolute path, import it with sandbox_import_path first and run commands against the imported sandbox-relative copy."
+        ),
         "parameters": {
             "type": "object",
             "properties": {

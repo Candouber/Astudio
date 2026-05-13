@@ -110,6 +110,10 @@ REPORT_BLOCKER_SCHEMA: Dict[str, Any] = {
 
 PROTOCOL_TOOL_NAMES = {"submit_task_deliverable", "report_system_blocker"}
 
+_WRITE_PATH_ALIASES = ("path", "file_path", "filepath", "target_path", "filename", "name")
+_WRITE_CONTENT_ALIASES = ("content", "contents", "text", "body", "data", "html", "markdown")
+_READ_PATH_ALIASES = ("path", "file_path", "filepath", "target_path", "filename", "name")
+
 # ── 内置 Python 实现 ───────────────────────────────────────────────────────────
 # slug 必须与 skill_store.DEFAULT_SKILLS 里的 slug 对齐。
 _BUILTIN_IMPL: Dict[str, Tuple[Callable, Dict[str, Any]]] = {
@@ -143,6 +147,29 @@ _BUILTIN_IMPL: Dict[str, Tuple[Callable, Dict[str, Any]]] = {
 def builtin_slugs() -> List[str]:
     """当前 Python 层实际有实现的内置 slug 列表。"""
     return list(_BUILTIN_IMPL.keys())
+
+
+def _normalize_builtin_arguments(tool_name: str, arguments: Dict[str, Any] | None) -> Dict[str, Any]:
+    args = dict(arguments or {})
+    if tool_name in {"read_file", "sandbox_read_file"}:
+        for key in _READ_PATH_ALIASES:
+            if key in args:
+                return {"path": args[key]}
+        return {}
+
+    if tool_name not in {"write_file", "sandbox_write_file"}:
+        return args
+
+    normalized: Dict[str, Any] = {}
+    for key in _WRITE_PATH_ALIASES:
+        if key in args:
+            normalized["path"] = args[key]
+            break
+    for key in _WRITE_CONTENT_ALIASES:
+        if key in args:
+            normalized["content"] = args[key]
+            break
+    return normalized
 
 
 def all_builtin_schemas() -> List[Dict[str, Any]]:
@@ -321,6 +348,7 @@ async def execute_tool(tool_name: str, arguments: Dict[str, Any]) -> str:
     impl = _BUILTIN_IMPL.get(tool_name)
     if impl is not None:
         fn, _schema = impl
+        arguments = _normalize_builtin_arguments(tool_name, arguments)
         try:
             result = await fn(**arguments)
             logger.debug(f"Tool [{tool_name}] (builtin) executed, len={len(str(result))}")

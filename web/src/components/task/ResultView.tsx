@@ -618,6 +618,19 @@ export default function ResultView({ taskId, question, status, nodes, studioId, 
     return () => window.clearInterval(timer)
   }, [annotations, loadAnnotations])
 
+  useEffect(() => {
+    setActiveAnnotations(prev => {
+      let changed = false
+      const next = prev.map(item => {
+        const updated = annotations.find(annotation => annotation.id === item.annotation.id)
+        if (!updated || updated === item.annotation) return item
+        changed = true
+        return { ...item, annotation: updated }
+      })
+      return changed ? next : prev
+    })
+  }, [annotations])
+
   const loadStepEvents = useCallback(async () => {
     try {
       const list = await api.listTaskStepEvents(taskId)

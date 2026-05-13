@@ -24,6 +24,13 @@ interface AiDraft {
 const EMPTY_IMPORT: ImportDraft = { url: '', overrideSlug: '', category: '' }
 const EMPTY_AI: AiDraft = { slug: '', name: '', goal: '', category: '' }
 
+interface AssignmentMember {
+  studioId: string
+  memberId: string
+  role: string
+  skills: string[]
+}
+
 function extractApiError(err: unknown, fallback: string): string {
   const detail = (err as { response?: { data?: { detail?: string | unknown } } })?.response?.data?.detail
   if (typeof detail === 'string' && detail) return detail
@@ -64,8 +71,7 @@ export default function SkillPool() {
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({})
   const [assignmentSkill, setAssignmentSkill] = useState<SkillPoolItem | null>(null)
   const [assignmentTeams, setAssignmentTeams] = useState<Studio[]>([])
-  const [assignmentTeamId, setAssignmentTeamId] = useState('')
-  const [assignmentMemberId, setAssignmentMemberId] = useState('')
+  const [assignmentSelectedIds, setAssignmentSelectedIds] = useState<Set<string>>(() => new Set())
   const [assignmentLoading, setAssignmentLoading] = useState(false)
   const [assignmentMsg, setAssignmentMsg] = useState('')
 
@@ -109,15 +115,20 @@ export default function SkillPool() {
     return acc
   }, [skills, t])
 
-  const assignmentTeam = useMemo(
-    () => assignmentTeams.find(team => team.id === assignmentTeamId) || null,
-    [assignmentTeamId, assignmentTeams],
-  )
+  const assignmentMembers = useMemo<AssignmentMember[]>(() => (
+    assignmentTeams.flatMap(team => (
+      (team.sub_agents || []).map(member => ({
+        studioId: team.id,
+        memberId: member.id,
+        role: member.role,
+        skills: member.skills || [],
+      }))
+    ))
+  ), [assignmentTeams])
 
-  const assignmentMember = useMemo(
-    () => assignmentTeam?.sub_agents.find(member => member.id === assignmentMemberId) || null,
-    [assignmentMemberId, assignmentTeam],
-  )
+  const assignmentSelectedCount = useMemo(() => (
+    assignmentMembers.filter(member => assignmentSelectedIds.has(member.memberId)).length
+  ), [assignmentMembers, assignmentSelectedIds])
 
   // URL 变化时 debounce 调 /skills/probe，用于在输入框下方展示识别结果
   useEffect(() => {
@@ -204,33 +215,58 @@ export default function SkillPool() {
     try {
       const teams = await api.getStudios()
       setAssignmentTeams(teams)
-      const firstTeam = teams[0]
-      setAssignmentTeamId(firstTeam?.id || '')
-      setAssignmentMemberId(firstTeam?.sub_agents?.[0]?.id || '')
+      setAssignmentSelectedIds(new Set(teams.flatMap(team => (team.sub_agents || []).map(member => member.id))))
     } catch (e) {
       setAssignmentTeams([])
+      setAssignmentSelectedIds(new Set())
       setAssignmentMsg(extractApiError(e, t('skillPool.opFailed')))
     } finally {
       setAssignmentLoading(false)
     }
   }
 
-  const handleAssignmentTeamChange = (teamId: string) => {
-    setAssignmentTeamId(teamId)
-    const nextTeam = assignmentTeams.find(team => team.id === teamId)
-    setAssignmentMemberId(nextTeam?.sub_agents?.[0]?.id || '')
+  const closeAssignment = () => {
+    if (assignmentLoading) return
+    setAssignmentSkill(null)
+    setAssignmentTeams([])
+    setAssignmentSelectedIds(new Set())
+    setAssignmentMsg('')
+  }
+
+  const handleToggleAssignmentMember = (memberId: string) => {
+    setAssignmentSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(memberId)) next.delete(memberId)
+      else next.add(memberId)
+      return next
+    })
+  }
+
+  const handleToggleAllAssignmentMembers = () => {
+    setAssignmentSelectedIds(prev => {
+      if (assignmentMembers.length > 0 && assignmentMembers.every(member => prev.has(member.memberId))) {
+        return new Set()
+      }
+      return new Set(assignmentMembers.map(member => member.memberId))
+    })
   }
 
   const handleAssignSkill = async () => {
-    if (!assignmentSkill || !assignmentTeam || !assignmentMember) return
+    if (!assignmentSkill) return
+    const selectedMembers = assignmentMembers.filter(member => assignmentSelectedIds.has(member.memberId))
+    if (selectedMembers.length === 0) {
+      setAssignmentMsg(t('skillPool.selectAtLeastOne'))
+      return
+    }
     setAssignmentLoading(true)
     setAssignmentMsg('')
     try {
-      const nextSkills = Array.from(new Set([...(assignmentMember.skills || []), assignmentSkill.slug]))
-      await api.updateMember(assignmentTeam.id, assignmentMember.id, { skills: nextSkills })
-      setAssignmentMsg(t('skillPool.assignSuccess', { role: assignmentMember.role }))
-      const teams = await api.getStudios()
-      setAssignmentTeams(teams)
+      await Promise.all(selectedMembers.map(member => {
+        const nextSkills = Array.from(new Set([...member.skills, assignmentSkill.slug]))
+        return api.updateMember(member.studioId, member.memberId, { skills: nextSkills })
+      }))
+      setAssignmentMsg(t('skillPool.assignBulkSuccess', { n: selectedMembers.length }))
+      setAssignmentTeams(await api.getStudios())
     } catch (e) {
       setAssignmentMsg(extractApiError(e, t('skillPool.opFailed')))
     } finally {
@@ -360,54 +396,6 @@ export default function SkillPool() {
           <AlertTriangle size={15} />
           <span>{error}</span>
         </div>
-      )}
-
-      {assignmentSkill && (
-        <section className="skill-pool-assignment">
-          <div className="skill-pool-assignment__title">
-            <Users size={16} />
-            <strong>{t('skillPool.assignTitle')}</strong>
-            <code>{assignmentSkill.slug}</code>
-          </div>
-          <div className="skill-pool-assignment__controls">
-            <select
-              className="input-base"
-              value={assignmentTeamId}
-              onChange={e => handleAssignmentTeamChange(e.target.value)}
-              disabled={assignmentLoading || assignmentTeams.length === 0}
-            >
-              {assignmentTeams.map(team => (
-                <option key={team.id} value={team.id}>{team.scenario}</option>
-              ))}
-            </select>
-            <select
-              className="input-base"
-              value={assignmentMemberId}
-              onChange={e => setAssignmentMemberId(e.target.value)}
-              disabled={assignmentLoading || !assignmentTeam || assignmentTeam.sub_agents.length === 0}
-            >
-              {(assignmentTeam?.sub_agents || []).map(member => (
-                <option key={member.id} value={member.id}>{member.role}</option>
-              ))}
-            </select>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={handleAssignSkill}
-              disabled={assignmentLoading || !assignmentSkill || !assignmentMember}
-            >
-              {assignmentLoading ? <Loader size={14} className="animate-pulse" /> : <Check size={14} />}
-              {t('skillPool.assignNow')}
-            </button>
-            <button type="button" className="btn btn-secondary" onClick={() => setAssignmentSkill(null)} disabled={assignmentLoading}>
-              {t('skillPool.assignLater')}
-            </button>
-          </div>
-          {assignmentTeams.length === 0 && !assignmentLoading && (
-            <p>{t('skillPool.noTeamForAssign')}</p>
-          )}
-          {assignmentMsg && <p>{assignmentMsg}</p>}
-        </section>
       )}
 
       {/* ── 导入区 ─────────────────────────────────────────────────── */}
@@ -695,6 +683,96 @@ export default function SkillPool() {
         <Search size={14} />
         {t('skillPool.footerHint')}
       </div>
+
+      {assignmentSkill && (
+        <div className="skill-pool-assign-modal" role="dialog" aria-modal="true" aria-label={t('skillPool.assignModalAria')}>
+          <button
+            type="button"
+            className="skill-pool-assign-modal__mask"
+            onClick={closeAssignment}
+            aria-label={t('skillPool.assignLater')}
+            disabled={assignmentLoading}
+          />
+          <section className="skill-pool-assign-modal__panel">
+            <header className="skill-pool-assign-modal__header">
+              <div>
+                <div className="skill-pool-assign-modal__title">
+                  <Users size={17} />
+                  <strong>{t('skillPool.assignTitle')}</strong>
+                </div>
+                <p>
+                  {t('skillPool.assignModalDesc')} <code>{assignmentSkill.slug}</code>
+                </p>
+              </div>
+              <button type="button" className="btn btn-icon" onClick={closeAssignment} disabled={assignmentLoading} title={t('skillPool.close')}>
+                <X size={15} />
+              </button>
+            </header>
+
+            <div className="skill-pool-assign-modal__body">
+              {assignmentLoading && assignmentMembers.length === 0 ? (
+                <div className="skill-pool-assign-modal__loading">
+                  <Loader size={16} className="animate-pulse" />
+                  <span>{t('skillPool.loadingEmployees')}</span>
+                </div>
+              ) : assignmentMembers.length === 0 ? (
+                <p className="skill-pool-assign-modal__empty">{t('skillPool.noTeamForAssign')}</p>
+              ) : (
+                <>
+                  <div className="skill-pool-assign-modal__toolbar">
+                    <button type="button" className="btn btn-secondary" onClick={handleToggleAllAssignmentMembers} disabled={assignmentLoading}>
+                      <Check size={14} />
+                      {assignmentSelectedCount === assignmentMembers.length ? t('skillPool.unselectAll') : t('skillPool.selectAll')}
+                    </button>
+                    <span>{t('skillPool.selectedEmployees', { n: assignmentSelectedCount, total: assignmentMembers.length })}</span>
+                  </div>
+                  <div className="skill-pool-assign-modal__list">
+                    {assignmentTeams.map(team => {
+                      const members = assignmentMembers.filter(member => member.studioId === team.id)
+                      if (members.length === 0) return null
+                      return (
+                        <div key={team.id} className="skill-pool-assign-modal__team">
+                          <div className="skill-pool-assign-modal__team-name">{team.scenario}</div>
+                          {members.map(member => (
+                            <label key={member.memberId} className="skill-pool-assign-modal__member">
+                              <input
+                                type="checkbox"
+                                checked={assignmentSelectedIds.has(member.memberId)}
+                                onChange={() => handleToggleAssignmentMember(member.memberId)}
+                                disabled={assignmentLoading}
+                              />
+                              <span>{member.role}</span>
+                              {member.skills.includes(assignmentSkill.slug) && (
+                                <em>{t('skillPool.alreadyAssigned')}</em>
+                              )}
+                            </label>
+                          ))}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
+              {assignmentMsg && <p className="skill-pool-assign-modal__msg">{assignmentMsg}</p>}
+            </div>
+
+            <footer className="skill-pool-assign-modal__footer">
+              <button type="button" className="btn btn-secondary" onClick={closeAssignment} disabled={assignmentLoading}>
+                {t('skillPool.assignLater')}
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleAssignSkill}
+                disabled={assignmentLoading || assignmentMembers.length === 0 || assignmentSelectedCount === 0}
+              >
+                {assignmentLoading ? <Loader size={14} className="animate-pulse" /> : <Check size={14} />}
+                {t('skillPool.assignSelected', { n: assignmentSelectedCount })}
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
 
       {/* SKILL.md 预览抽屉 */}
       {mdPayload && (

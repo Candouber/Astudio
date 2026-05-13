@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from loguru import logger
@@ -24,13 +25,16 @@ def _safe_path(relative_path: str) -> Path:
     return target
 
 
-async def read_file(path: str) -> str:
+async def read_file(path: str = "") -> str:
+    if not isinstance(path, str) or not path.strip():
+        return "[Argument error] read_file requires a non-empty workspace-relative `path`."
     try:
-        target = _safe_path(path)
+        normalized_path = path.strip()
+        target = _safe_path(normalized_path)
         if not target.exists():
-            return f"[File not found] {path}"
+            return f"[File not found] {normalized_path}"
         if not target.is_file():
-            return f"[Not a file] {path}"
+            return f"[Not a file] {normalized_path}"
 
         content = target.read_text(encoding="utf-8", errors="replace")
         if len(content) > MAX_READ_CHARS:
@@ -43,12 +47,19 @@ async def read_file(path: str) -> str:
         return f"[Read failed] {e}"
 
 
-async def write_file(path: str, content: str) -> str:
+async def write_file(path: str = "", content: str = "") -> str:
+    if not isinstance(path, str) or not path.strip():
+        return "[Argument error] write_file requires a non-empty workspace-relative `path` and `content`."
+    if content is None:
+        content = ""
+    elif not isinstance(content, str):
+        content = json.dumps(content, ensure_ascii=False, indent=2)
     try:
-        target = _safe_path(path)
+        normalized_path = path.strip()
+        target = _safe_path(normalized_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
-        return f"[Write succeeded] {path} ({len(content)} characters)"
+        return f"[Write succeeded] {normalized_path} ({len(content)} characters)"
     except PermissionError as e:
         return f"[Permission error] {e}"
     except Exception as e:

@@ -32,7 +32,7 @@ OUTPUT_NODE_PREFIX = "__output__:"
 _cancel_registry: dict[str, asyncio.Event] = {}
 _running_tasks: dict[str, set[asyncio.Task]] = defaultdict(set)
 _annotation_subscribers: dict[str, set[asyncio.Queue]] = defaultdict(set)
-_annotation_background_tasks: set[asyncio.Task] = set()
+_annotation_generation_tasks: dict[str, asyncio.Task] = {}
 
 
 def _register_running(task_id: str, task: asyncio.Task) -> None:
@@ -48,9 +48,20 @@ def _cancel_all_running(task_id: str) -> int:
     return len(tasks)
 
 
-def _register_background_annotation(task: asyncio.Task) -> None:
-    _annotation_background_tasks.add(task)
-    task.add_done_callback(lambda t: _annotation_background_tasks.discard(t))
+def _register_background_annotation(ann_id: str, task: asyncio.Task) -> None:
+    _annotation_generation_tasks[ann_id] = task
+
+    def _cleanup(done: asyncio.Task) -> None:
+        if _annotation_generation_tasks.get(ann_id) is done:
+            _annotation_generation_tasks.pop(ann_id, None)
+        try:
+            done.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logger.exception(f"批注后台生成任务异常 ann_id={ann_id}: {exc}")
+
+    task.add_done_callback(_cleanup)
 
 
 async def _publish_annotation_event(ann_id: str, event: str, data: dict) -> None:
@@ -1844,9 +1855,138 @@ async def terminate_task(task_id: str):
 # ──────────────────────────────────────────────
 # 批注系统
 # ──────────────────────────────────────────────
+async def _build_annotation_generation_messages(annotation: dict) -> list[dict]:
+    task_id = annotation.get("task_id") or ""
+    task = await task_store.get(task_id)
+    if not task:
+        raise HTTPException(404, "任务不存在")
+
+    selected_text = annotation.get("selected_text") or ""
+    question = annotation.get("question") or ""
+    target_type = annotation.get("target_type") or "node"
+    target_id = annotation.get("target_id") or annotation.get("node_id") or ""
+
+    root_node = next((n for n in task.nodes if n.type == "agent_zero"), None)
+    node_context = ""
+    node_role = "Unknown"
+    node_label = ""
+
+    if target_type == "output":
+        output_path = target_id
+        node_context = await _read_output_annotation_context(task_id, output_path)
+        node_role = "Output file"
+        node_label = output_path
+    elif target_type == "annotation":
+        parent_ann_id = target_id or annotation.get("parent_annotation_id") or ""
+        parent_ann = await task_store.get_annotation(parent_ann_id) if parent_ann_id else None
+        if not parent_ann or parent_ann.get("task_id") != task_id:
+            raise HTTPException(404, "批注不存在")
+        node_context = (
+            f"Selected text:\n{parent_ann.get('selected_text') or ''}\n\n"
+            f"Question:\n{parent_ann.get('question') or ''}\n\n"
+            f"Answer:\n{parent_ann.get('answer') or ''}"
+        )
+        node_role = "Annotation thread"
+        node_label = parent_ann.get("question") or parent_ann_id
+    else:
+        node_id = target_id or annotation.get("node_id") or "__synthesis__"
+        if node_id == "__synthesis__" and root_node:
+            node_id = root_node.id
+        target_node = next((n for n in task.nodes if n.id == node_id), None)
+        if target_node:
+            node_context = target_node.output or ""
+            node_role = target_node.agent_role or "Unknown"
+            node_label = target_node.step_label or target_node.id
+
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are a task-result annotation assistant. The user selected text while reading "
+                "a studio member's output and asked a question.\n"
+                "Answer precisely using the full output context. Keep the answer concise, accurate, "
+                "and directly relevant.\n"
+                "Markdown is allowed.\n\n"
+                f"{response_language_instruction(question or task.question, subject='the annotation answer')}"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"## Output Source\n"
+                f"- Step: {node_label}\n"
+                f"- Role: {node_role}\n\n"
+                f"## Full Output Content\n{node_context}\n\n"
+                f"---\n\n"
+                f"## User-Selected Text\n> {selected_text}\n\n"
+                f"## User Question\n{question}"
+            ),
+        },
+    ]
+
+
+async def _generate_annotation_answer(ann_id: str) -> None:
+    annotation = await task_store.get_annotation(ann_id)
+    if not annotation:
+        return
+    if (annotation.get("answer") or "").strip():
+        await _publish_annotation_event(
+            ann_id,
+            "done",
+            {"ann_id": ann_id, "answer": annotation.get("answer") or ""},
+        )
+        return
+
+    question = annotation.get("question") or ""
+    task = await task_store.get(annotation.get("task_id") or "")
+
+    full_answer = ""
+    try:
+        messages = await _build_annotation_generation_messages(annotation)
+        stream = await llm_service.chat(
+            messages=messages,
+            role="sub_agent",
+            stream=True,
+            temperature=0.5,
+        )
+        async for chunk in stream:
+            if chunk:
+                full_answer += chunk
+                await _publish_annotation_event(ann_id, "chunk", {"text": chunk, "ann_id": ann_id})
+    except Exception as e:
+        logger.exception(f"批注 AI 回答失败 ann_id={ann_id}: {e}")
+        source_text = question or (task.question if task else "")
+        err_msg = (
+            f"回答生成失败: {type(e).__name__}"
+            if is_chinese(source_text)
+            else f"Answer generation failed: {type(e).__name__}"
+        )
+        full_answer = err_msg
+        await _publish_annotation_event(ann_id, "chunk", {"text": err_msg, "ann_id": ann_id})
+
+    if not full_answer.strip():
+        source_text = question or (task.question if task else "")
+        full_answer = "没有生成有效回答，请重试。" if is_chinese(source_text) else "No valid answer was generated. Please retry."
+
+    await task_store.update_annotation_answer(ann_id, full_answer)
+    await _publish_annotation_event(ann_id, "done", {"ann_id": ann_id, "answer": full_answer})
+
+
+def _ensure_annotation_generation(ann_id: str) -> None:
+    existing = _annotation_generation_tasks.get(ann_id)
+    if existing and not existing.done():
+        return
+    task = asyncio.create_task(_generate_annotation_answer(ann_id))
+    _register_background_annotation(ann_id, task)
+
+
 @router.get("/{task_id}/annotations")
 async def list_annotations(task_id: str):
-    return await task_store.list_annotations(task_id)
+    annotations = await task_store.list_annotations(task_id)
+    for annotation in annotations:
+        if not (annotation.get("answer") or "").strip():
+            _ensure_annotation_generation(annotation["id"])
+    return annotations
 
 
 @router.delete("/{task_id}/annotations/{ann_id}")
@@ -1882,9 +2022,6 @@ async def annotate(task_id: str, payload: dict):
         output_path = node_id[len(OUTPUT_NODE_PREFIX):]
         if not root_node:
             raise HTTPException(400, "当前任务没有可关联的结果节点")
-        node_context = await _read_output_annotation_context(task_id, output_path)
-        node_role = "Output file"
-        node_label = output_path
         storage_node_id = root_node.id
         target_type = "output"
         target_id = output_path
@@ -1893,13 +2030,6 @@ async def annotate(task_id: str, payload: dict):
         parent_ann = await task_store.get_annotation(parent_ann_id)
         if not parent_ann or parent_ann.get("task_id") != task_id:
             raise HTTPException(404, "批注不存在")
-        node_context = (
-            f"Selected text:\n{parent_ann.get('selected_text') or ''}\n\n"
-            f"Question:\n{parent_ann.get('question') or ''}\n\n"
-            f"Answer:\n{parent_ann.get('answer') or ''}"
-        )
-        node_role = "Annotation thread"
-        node_label = parent_ann.get("question") or parent_ann_id
         parent_annotation_id = parent_ann_id
         storage_node_id = parent_ann.get("node_id") or (root_node.id if root_node else "")
         target_type = "annotation"
@@ -1908,13 +2038,9 @@ async def annotate(task_id: str, payload: dict):
         storage_node_id = root_node.id
         target_id = root_node.id
         target_node = root_node
-        node_context = root_node.output or ""
-        node_role = root_node.agent_role or "Agent0"
-        node_label = root_node.step_label or "Synthesis"
     else:
-        node_context = target_node.output if target_node else ""
-        node_role = target_node.agent_role if target_node else "Unknown"
-        node_label = target_node.step_label if target_node else ""
+        if not target_node:
+            raise HTTPException(404, "结果节点不存在")
 
     ann_id = uuid.uuid4().hex[:12]
     await task_store.create_annotation(
@@ -1928,64 +2054,9 @@ async def annotate(task_id: str, payload: dict):
         target_id=target_id,
     )
 
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are a task-result annotation assistant. The user selected text while reading "
-                "a studio member's output and asked a question.\n"
-                "Answer precisely using the full output context. Keep the answer concise, accurate, "
-                "and directly relevant.\n"
-                "Markdown is allowed.\n\n"
-                f"{response_language_instruction(question or task.question, subject='the annotation answer')}"
-            ),
-        },
-        {
-            "role": "user",
-            "content": (
-                f"## Output Source\n"
-                f"- Step: {node_label}\n"
-                f"- Role: {node_role}\n\n"
-                f"## Full Output Content\n{node_context}\n\n"
-                f"---\n\n"
-                f"## User-Selected Text\n> {selected_text}\n\n"
-                f"## User Question\n{question}"
-            ),
-        },
-    ]
-
-    async def generate_annotation_answer():
-        from services.llm_service import llm_service
-
-        full_answer = ""
-        try:
-            stream = await llm_service.chat(
-                messages=messages,
-                role="sub_agent",
-                stream=True,
-                temperature=0.5,
-            )
-            async for chunk in stream:
-                if chunk:
-                    full_answer += chunk
-                    await _publish_annotation_event(ann_id, "chunk", {"text": chunk, "ann_id": ann_id})
-        except Exception as e:
-            logger.exception(f"批注 AI 回答失败: {e}")
-            err_msg = (
-                f"回答生成失败: {type(e).__name__}"
-                if is_chinese(question or task.question)
-                else f"Answer generation failed: {type(e).__name__}"
-            )
-            full_answer = err_msg
-            await _publish_annotation_event(ann_id, "chunk", {"text": err_msg, "ann_id": ann_id})
-
-        await task_store.update_annotation_answer(ann_id, full_answer)
-        await _publish_annotation_event(ann_id, "done", {"ann_id": ann_id, "answer": full_answer})
-
     queue: asyncio.Queue = asyncio.Queue()
     _annotation_subscribers[ann_id].add(queue)
-    bg_task = asyncio.create_task(generate_annotation_answer())
-    _register_background_annotation(bg_task)
+    _ensure_annotation_generation(ann_id)
 
     async def event_generator():
         try:
